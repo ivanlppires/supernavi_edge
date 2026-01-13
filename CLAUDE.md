@@ -88,11 +88,34 @@ supernavi2_edge/
 |----------|-------------|
 | `GET /v1/health` | Agent status |
 | `GET /v1/capabilities` | Available features |
-| `GET /v1/slides` | List all slides (includes format) |
+| `GET /v1/slides` | List all slides (includes levelMax, levelReadyMax) |
 | `GET /v1/slides/:id` | Slide details |
 | `GET /v1/slides/:id/manifest` | DZI manifest |
 | `GET /v1/slides/:id/thumb` | Thumbnail |
 | `GET /v1/slides/:id/tiles/:z/:x/:y.jpg` | Tile image |
+| `GET /v1/slides/:id/availability` | Tile readiness (levelMax, levelReadyMax, tilesComplete) |
+
+### Tile URL Mapping
+
+- **API URL**: `/v1/slides/{slideId}/tiles/{z}/{x}/{y}.jpg`
+- **Disk path**: `tiles/{z}/{x}_{y}.jpg`
+
+### Manifest Format
+
+```json
+{
+  "protocol": "dzi",
+  "tileSize": 256,
+  "overlap": 0,
+  "format": "jpg",
+  "width": 10961,
+  "height": 12499,
+  "levelMin": 0,
+  "levelMax": 14,
+  "tilePathPattern": "tiles/{z}/{x}_{y}.jpg",
+  "tileUrlTemplate": "/v1/slides/{slideId}/tiles/{z}/{x}/{y}.jpg"
+}
+```
 
 ## Pipeline Processing
 
