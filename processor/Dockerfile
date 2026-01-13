@@ -1,28 +1,24 @@
-FROM node:20-alpine
+FROM node:20-bookworm-slim
 
 # Install OpenSlide, libvips and dependencies
-RUN apk add --no-cache \
-    # Build tools
-    build-base \
-    python3 \
-    # OpenSlide and dependencies
-    openslide \
-    openslide-dev \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # OpenSlide
+    libopenslide0 \
+    libopenslide-dev \
     openslide-tools \
-    # libvips with OpenSlide support
-    vips \
-    vips-dev \
-    vips-tools \
-    # Image format support
-    libjpeg-turbo \
-    libpng \
-    tiff \
-    # Other dependencies
+    # libvips
+    libvips42 \
+    libvips-dev \
+    libvips-tools \
+    # Build tools for sharp
+    build-essential \
+    python3 \
+    # Other
     ca-certificates \
-    bash
+    && rm -rf /var/lib/apt/lists/*
 
 # Verify installations
-RUN vips --version && openslide-show-properties --version || true
+RUN vips --version && openslide-show-properties --version || echo "Version check skipped"
 
 WORKDIR /app
 
@@ -31,7 +27,6 @@ RUN npm install --production
 
 COPY src ./src
 
-# Environment
 ENV NODE_ENV=production
 
 CMD ["node", "src/worker.js"]

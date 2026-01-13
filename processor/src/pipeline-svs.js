@@ -26,7 +26,12 @@ async function getSlideProperties(rawPath) {
     for (const line of stdout.split('\n')) {
       const match = line.match(/^(.+?):\s*(.+)$/);
       if (match) {
-        props[match[1].trim()] = match[2].trim();
+        // Strip quotes from values (openslide outputs values like '10961')
+        let value = match[2].trim();
+        if (value.startsWith("'") && value.endsWith("'")) {
+          value = value.slice(1, -1);
+        }
+        props[match[1].trim()] = value;
       }
     }
 

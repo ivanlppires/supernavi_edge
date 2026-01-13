@@ -1,6 +1,7 @@
-import { watch } from 'fs';
-import { readdir, rename, mkdir, stat } from 'fs/promises';
+import { watch, createReadStream, createWriteStream } from 'fs';
+import { readdir, mkdir, stat, unlink } from 'fs/promises';
 import { join, basename, extname } from 'path';
+import { pipeline } from 'stream/promises';
 import { hashFile } from '../lib/hash.js';
 import { enqueueJob } from '../lib/queue.js';
 import { createSlide, createJob } from '../db/slides.js';
@@ -30,6 +31,15 @@ async function ensureDirectories() {
   await mkdir(INGEST_DIR, { recursive: true });
   await mkdir(RAW_DIR, { recursive: true });
   await mkdir(DERIVED_DIR, { recursive: true });
+}
+
+// Move file across devices (copy + delete)
+async function moveFile(src, dest) {
+  await pipeline(
+    createReadStream(src),
+    createWriteStream(dest)
+  );
+  await unlink(src);
 }
 
 async function processFile(filePath) {
@@ -65,10 +75,10 @@ async function processFile(filePath) {
     const slideId = await hashFile(filePath);
     console.log(`Processing file: ${originalName} -> slideId: ${slideId.substring(0, 12)}... (format: ${format})`);
 
-    // Move to RAW_DIR
+    // Move to RAW_DIR (uses copy+delete for cross-device support)
     const rawFileName = `${slideId}_${originalName}`;
     const rawPath = join(RAW_DIR, rawFileName);
-    await rename(filePath, rawPath);
+    await moveFile(filePath, rawPath);
     console.log(`Moved to raw: ${rawPath}`);
 
     // Create slide record with format
