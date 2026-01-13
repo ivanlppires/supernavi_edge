@@ -174,22 +174,6 @@ export async function processSVS_P0(job) {
   const thumbPath = join(slideDir, 'thumb.jpg');
   await generateThumbnail(rawPath, thumbPath);
 
-  // Generate manifest immediately (so viewer can start)
-  const manifest = {
-    protocol: 'dzi',
-    tileSize: TILE_SIZE,
-    overlap: TILE_OVERLAP,
-    format: 'jpg',
-    maxLevel,
-    width,
-    height,
-    tileUrlTemplate: `/v1/slides/${slideId}/tiles/{z}/{x}/{y}.jpg`
-  };
-
-  const manifestPath = join(slideDir, 'manifest.json');
-  await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
-  console.log(`Generated manifest: ${manifestPath}`);
-
   // Generate all tiles with vips dzsave
   // Note: vips dzsave generates all levels at once, so P0/P1 separation
   // is less relevant here. We mark as "ready" after generation completes.
@@ -206,10 +190,30 @@ export async function processSVS_P0(job) {
   const totalTiles = Object.values(tileCount).reduce((a, b) => a + b, 0);
   console.log(`Total tiles: ${totalTiles}`);
 
+  // Generate manifest after tiles are ready (includes actual level info)
+  const manifest = {
+    protocol: 'dzi',
+    tileSize: TILE_SIZE,
+    overlap: TILE_OVERLAP,
+    format: 'jpg',
+    width,
+    height,
+    levelMin: 0,
+    levelMax: maxLevel,
+    tilePathPattern: 'tiles/{z}/{x}_{y}.jpg',
+    tileUrlTemplate: `/v1/slides/${slideId}/tiles/{z}/{x}/{y}.jpg`
+  };
+
+  const manifestPath = join(slideDir, 'manifest.json');
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
+  console.log(`Generated manifest: ${manifestPath}`);
+
   return {
     width,
     height,
     maxLevel,
+    p0MaxLevel: maxLevel, // SVS generates all levels at once
+    levelReadyMax: maxLevel,
     thumbPath,
     manifestPath,
     tileCount

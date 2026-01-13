@@ -117,10 +117,13 @@ export async function processP0(job) {
   const manifest = {
     protocol: 'dzi',
     tileSize: TILE_SIZE,
+    overlap: 0,
     format: 'jpg',
-    maxLevel,
     width,
     height,
+    levelMin: 0,
+    levelMax: maxLevel,
+    tilePathPattern: 'tiles/{z}/{x}_{y}.jpg',
     tileUrlTemplate: `/v1/slides/${slideId}/tiles/{z}/{x}/{y}.jpg`
   };
 
@@ -134,6 +137,7 @@ export async function processP0(job) {
     height,
     maxLevel,
     p0MaxLevel,
+    levelReadyMax: p0MaxLevel,
     thumbPath,
     manifestPath
   };

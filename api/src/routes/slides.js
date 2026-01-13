@@ -1,9 +1,44 @@
 import { createReadStream } from 'fs';
-import { access, readFile } from 'fs/promises';
+import { access, readFile, readdir } from 'fs/promises';
 import { join } from 'path';
-import { listSlides, getSlide } from '../db/slides.js';
+import { listSlides, getSlide, updateLevelReadyMax } from '../db/slides.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
+
+/**
+ * Calculate levelReadyMax from disk by scanning tiles directory
+ * Returns the highest level number that has tiles
+ */
+async function scanLevelReadyMax(slideId) {
+  const tilesDir = join(DERIVED_DIR, slideId, 'tiles');
+  try {
+    const entries = await readdir(tilesDir);
+    const levels = entries
+      .filter(e => /^\d+$/.test(e))
+      .map(e => parseInt(e, 10));
+    return levels.length > 0 ? Math.max(...levels) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Count total tiles on disk for a slide
+ */
+async function countTilesOnDisk(slideId) {
+  const tilesDir = join(DERIVED_DIR, slideId, 'tiles');
+  let total = 0;
+  try {
+    const levels = await readdir(tilesDir);
+    for (const level of levels) {
+      if (/^\d+$/.test(level)) {
+        const tiles = await readdir(join(tilesDir, level));
+        total += tiles.filter(t => t.endsWith('.jpg')).length;
+      }
+    }
+  } catch {}
+  return total;
+}
 
 export default async function slidesRoutes(fastify) {
   // List all slides
@@ -16,6 +51,8 @@ export default async function slidesRoutes(fastify) {
         width: s.width || 0,
         height: s.height || 0,
         maxLevel: s.max_level || 0,
+        levelMax: s.max_level || 0,
+        levelReadyMax: s.level_ready_max || 0,
         format: s.format || 'unknown'
       }))
     };
@@ -88,8 +125,42 @@ export default async function slidesRoutes(fastify) {
       width: slide.width,
       height: slide.height,
       maxLevel: slide.max_level,
+      levelMax: slide.max_level,
+      levelReadyMax: slide.level_ready_max || 0,
       tileSize: slide.tile_size,
       createdAt: slide.created_at
+    };
+  });
+
+  // Get slide availability (tile readiness info)
+  fastify.get('/slides/:slideId/availability', async (request, reply) => {
+    const { slideId } = request.params;
+    const slide = await getSlide(slideId);
+
+    if (!slide) {
+      reply.code(404);
+      return { error: 'Slide not found' };
+    }
+
+    // Get cached levelReadyMax from DB
+    let levelReadyMax = slide.level_ready_max || 0;
+
+    // If status is ready and levelReadyMax is 0, scan disk and update cache
+    if (slide.status === 'ready' && levelReadyMax === 0) {
+      levelReadyMax = await scanLevelReadyMax(slideId);
+      if (levelReadyMax > 0) {
+        await updateLevelReadyMax(slideId, levelReadyMax);
+      }
+    }
+
+    // Count tiles on disk
+    const tilesComplete = await countTilesOnDisk(slideId);
+
+    return {
+      slideId: slide.id,
+      levelMax: slide.max_level || 0,
+      levelReadyMax,
+      tilesComplete
     };
   });
 }

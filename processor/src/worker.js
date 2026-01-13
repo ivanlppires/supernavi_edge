@@ -131,6 +131,7 @@ async function processJob(job) {
         width: result.width,
         height: result.height,
         max_level: result.maxLevel,
+        level_ready_max: result.levelReadyMax,
         thumb_path: result.thumbPath,
         manifest_path: result.manifestPath,
         status: 'ready'
@@ -156,9 +157,10 @@ async function processJob(job) {
 
       console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
     } else if (job.type === 'P1') {
-      await processP1(job);
+      const result = await processP1(job);
+      await updateSlide(job.slideId, { level_ready_max: result.levelReadyMax });
       await updateJob(job.jobId, { status: 'done' });
-      console.log(`P1 complete for ${job.slideId.substring(0, 12)}`);
+      console.log(`P1 complete for ${job.slideId.substring(0, 12)}, levelReadyMax=${result.levelReadyMax}`);
     }
   } catch (err) {
     console.error(`Job failed: ${err.message}`);

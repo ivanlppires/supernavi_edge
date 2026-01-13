@@ -42,7 +42,7 @@ export async function getSlide(id) {
 
 export async function listSlides() {
   const result = await query(
-    'SELECT id, status, width, height, max_level, format, created_at FROM slides ORDER BY created_at DESC'
+    'SELECT id, status, width, height, max_level, level_ready_max, format, created_at FROM slides ORDER BY created_at DESC'
   );
   return result.rows;
 }
@@ -75,4 +75,11 @@ export async function updateJob(id, updates) {
     values
   );
   return result.rows[0];
+}
+
+export async function updateLevelReadyMax(id, levelReadyMax) {
+  await query(
+    'UPDATE slides SET level_ready_max = $1 WHERE id = $2',
+    [levelReadyMax, id]
+  );
 }

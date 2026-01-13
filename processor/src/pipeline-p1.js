@@ -88,5 +88,5 @@ export async function processP1(job) {
     console.log(`P1: Level ${level}: ${result.tilesX}x${result.tilesY} tiles`);
   }
 
-  return { completed: true };
+  return { completed: true, levelReadyMax: maxLevel };
 }
