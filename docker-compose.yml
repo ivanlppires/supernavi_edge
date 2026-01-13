@@ -1,0 +1,110 @@
+version: "3.8"
+
+services:
+  # API Local - Fastify
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    container_name: supernavi-api
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://supernavi:supernavi@db:5432/supernavi
+      REDIS_URL: redis://redis:6379
+      INGEST_DIR: /data/inbox
+      RAW_DIR: /data/raw
+      DERIVED_DIR: /data/derived
+      MIGRATIONS_DIR: /app/db/migrations
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - supernavi-internal
+    volumes:
+      - ./data/inbox:/data/inbox
+      - ./data/raw:/data/raw
+      - ./data/derived:/data/derived
+      - ./db/migrations:/app/db/migrations:ro
+
+  # Processor - Sharp (preparado para OpenSlide)
+  processor:
+    build:
+      context: ./processor
+      dockerfile: Dockerfile
+    container_name: supernavi-processor
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://supernavi:supernavi@db:5432/supernavi
+      DERIVED_DIR: /data/derived
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - supernavi-internal
+    volumes:
+      - ./data/raw:/data/raw:ro
+      - ./data/derived:/data/derived
+
+  # Sync Engine (placeholder)
+  sync:
+    build:
+      context: ./sync
+      dockerfile: Dockerfile
+    container_name: supernavi-sync
+    restart: unless-stopped
+    environment:
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgres://supernavi:supernavi@db:5432/supernavi
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - supernavi-internal
+
+  # PostgreSQL
+  db:
+    image: postgres:16-alpine
+    container_name: supernavi-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: supernavi
+      POSTGRES_PASSWORD: supernavi
+      POSTGRES_DB: supernavi
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - supernavi-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supernavi"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: supernavi-redis
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+    networks:
+      - supernavi-internal
+
+networks:
+  supernavi-internal:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:
