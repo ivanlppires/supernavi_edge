@@ -4,16 +4,24 @@
 
 O pipeline local processa imagens e lâminas digitais (WSI) em tiles DeepZoom para visualização no viewer.
 
+### Arquitetura Edge-First
+
+**SVS/WSI agora abrem instantaneamente!**
+
+- P0 gera apenas thumbnail + manifest em ~1 segundo
+- Tiles são gerados sob demanda quando o viewer solicita
+- Cache em disco: tiles gerados são armazenados para reuso
+
 ### Formatos Suportados
 
-| Formato | Extensões | Pipeline |
-|---------|-----------|----------|
-| JPEG | .jpg, .jpeg | Sharp (Node.js) |
-| PNG | .png | Sharp (Node.js) |
-| **SVS** | **.svs** | **OpenSlide + libvips** |
-| TIFF | .tif, .tiff | OpenSlide + libvips |
-| NDPI | .ndpi | OpenSlide + libvips |
-| MRXS | .mrxs | OpenSlide + libvips |
+| Formato | Extensões | Pipeline | Tiles |
+|---------|-----------|----------|-------|
+| JPEG | .jpg, .jpeg | Sharp (Node.js) | Pré-gerados |
+| PNG | .png | Sharp (Node.js) | Pré-gerados |
+| **SVS** | **.svs** | **OpenSlide + libvips** | **On-demand** |
+| TIFF | .tif, .tiff | OpenSlide + libvips | On-demand |
+| NDPI | .ndpi | OpenSlide + libvips | On-demand |
+| MRXS | .mrxs | OpenSlide + libvips | On-demand |
 
 ### Fases de Processamento
 
@@ -21,9 +29,9 @@ O pipeline local processa imagens e lâminas digitais (WSI) em tiles DeepZoom pa
 - **P0**: Níveis 0-4 (preview rápido)
 - **P1**: Níveis restantes (zoom completo)
 
-**Para SVS/WSI:**
-- **P0**: Todos os níveis de uma vez via `vips dzsave`
-- **P1**: Não necessário (dzsave gera tudo)
+**Para SVS/WSI (Edge-First):**
+- **P0**: Apenas metadados + thumbnail (~1s)
+- **Tiles**: Gerados on-demand pela API
 
 ## Fluxo de Ingestão
 
@@ -35,21 +43,36 @@ O pipeline local processa imagens e lâminas digitais (WSI) em tiles DeepZoom pa
 4. Move para ./data/raw/{slideId}_{filename}
 5. Cria registro no banco com status "queued" e formato
 6. Enfileira job P0 no Redis
-7. Processor consome job e roteia para pipeline apropriado
-8. Slide fica com status "ready"
+7. Processor executa P0:
+   - JPG/PNG: Gera thumbnail + tiles níveis 0-4
+   - SVS/WSI: Gera apenas thumbnail + manifest (~1s)
+8. Slide fica com status "ready" (viewer pode abrir)
 ```
 
-## Processamento SVS (Whole Slide Image)
+## Pipeline SVS (Edge-First)
 
 ### Como funciona
 
+**P0 (processamento inicial):**
 1. **Leitura de metadados**: `openslide-show-properties` ou `vipsheader`
 2. **Geração de thumbnail**: `vips thumbnail`
-3. **Geração de tiles**: `vips dzsave` com parâmetros:
-   - `--tile-size 256`
-   - `--overlap 0`
-   - `--suffix .jpg[Q=90]`
-4. **Normalização**: Renomeia `dzi_files/` para `tiles/`
+3. **Manifest**: Criado com `onDemand: true`
+4. **Retorno**: Status "ready" em ~1 segundo
+
+**On-demand (quando tile é solicitado):**
+1. API recebe request para tile
+2. Se tile existe em disco, serve diretamente
+3. Se não existe e é WSI:
+   - Gera tile usando vips crop + resize
+   - Salva em disco para cache
+   - Serve o tile gerado
+
+### Request Coalescing
+
+Para evitar geração duplicada de tiles:
+- Lock in-memory por tile key
+- Requisições simultâneas aguardam a primeira geração
+- Se demorar muito, retorna 202 (viewer retry)
 
 ### Estrutura de saída
 
@@ -59,7 +82,7 @@ O pipeline local processa imagens e lâminas digitais (WSI) em tiles DeepZoom pa
 ├── manifest.json       # Metadados DeepZoom
 └── tiles/
     ├── 0/              # Nível 0 (menor resolução)
-    │   └── 0_0.jpg
+    │   └── 0_0.jpg     # Gerado on-demand
     ├── 1/
     ├── ...
     └── {maxLevel}/     # Nível máximo (resolução original)
@@ -76,10 +99,13 @@ O pipeline local processa imagens e lâminas digitais (WSI) em tiles DeepZoom pa
   "tileSize": 256,
   "overlap": 0,
   "format": "jpg",
-  "maxLevel": 15,
   "width": 50000,
   "height": 40000,
-  "tileUrlTemplate": "/v1/slides/{slideId}/tiles/{z}/{x}/{y}.jpg"
+  "levelMin": 0,
+  "levelMax": 15,
+  "tilePathPattern": "tiles/{z}/{x}_{y}.jpg",
+  "tileUrlTemplate": "/v1/slides/{slideId}/tiles/{z}/{x}/{y}.jpg",
+  "onDemand": true
 }
 ```
 
@@ -99,9 +125,48 @@ Resposta:
       "width": 50000,
       "height": 40000,
       "maxLevel": 15,
-      "format": "svs"
+      "levelReadyMax": 0,
+      "format": "svs",
+      "onDemand": true
     }
   ]
+}
+```
+
+### Obter info do slide
+```bash
+curl http://localhost:3000/v1/slides/{slideId}
+```
+Resposta:
+```json
+{
+  "slideId": "abc123...",
+  "status": "ready",
+  "format": "svs",
+  "width": 50000,
+  "height": 40000,
+  "maxLevel": 15,
+  "levelReadyMax": 0,
+  "tileSize": 256,
+  "onDemand": true,
+  "createdAt": "..."
+}
+```
+
+### Obter disponibilidade de tiles
+```bash
+curl http://localhost:3000/v1/slides/{slideId}/availability
+```
+Resposta:
+```json
+{
+  "slideId": "abc123...",
+  "levelMax": 15,
+  "levelReadyMax": 14,
+  "tilesOnDisk": 150,
+  "tilesComplete": false,
+  "onDemand": true,
+  "pendingGenerations": 2
 }
 ```
 
@@ -117,17 +182,17 @@ curl http://localhost:3000/v1/slides/{slideId}/thumb -o thumb.jpg
 
 ### Obter tile
 ```bash
-# Nível 0 (menor resolução)
+# Nível 0 (menor resolução) - gerado on-demand
 curl http://localhost:3000/v1/slides/{slideId}/tiles/0/0/0.jpg -o tile.jpg
 
-# Nível máximo (maior resolução)
+# Nível máximo (maior resolução) - gerado on-demand
 curl http://localhost:3000/v1/slides/{slideId}/tiles/15/100/80.jpg -o tile.jpg
 ```
 
-### Obter info do slide
-```bash
-curl http://localhost:3000/v1/slides/{slideId}
-```
+**Respostas possíveis:**
+- `200 OK` + imagem: Tile pronto
+- `202 Accepted`: Tile em geração (retry em 1s)
+- `404 Not Found`: Tile fora dos limites
 
 ## Como Testar
 
@@ -146,33 +211,44 @@ docker compose logs -f api processor
 cp /path/to/slide.svs ./data/inbox/
 ```
 
-### 4. Acompanhar processamento
+### 4. Verificar processamento P0 (deve ser rápido!)
 ```bash
 # Ver logs do processor
 docker compose logs -f processor
 
-# Verificar slides
+# Verificar slides - deve aparecer "ready" em ~1s
 curl http://localhost:3000/v1/slides | jq
 ```
 
-### 5. Verificar resultado
+### 5. Testar tiles on-demand
 ```bash
 SLIDE_ID=$(curl -s http://localhost:3000/v1/slides | jq -r '.items[0].slideId')
 
-# Manifest
-curl http://localhost:3000/v1/slides/$SLIDE_ID/manifest | jq
+# Primeiro request - gera o tile on-demand
+time curl -o tile0.jpg http://localhost:3000/v1/slides/$SLIDE_ID/tiles/0/0/0.jpg
 
-# Thumbnail
-curl http://localhost:3000/v1/slides/$SLIDE_ID/thumb -o thumb.jpg
+# Segundo request - serve do cache
+time curl -o tile0_cached.jpg http://localhost:3000/v1/slides/$SLIDE_ID/tiles/0/0/0.jpg
 
-# Tile do nível 0
-curl http://localhost:3000/v1/slides/$SLIDE_ID/tiles/0/0/0.jpg -o tile.jpg
+# Verificar availability
+curl http://localhost:3000/v1/slides/$SLIDE_ID/availability | jq
+```
+
+### 6. Verificar tiles em disco
+```bash
+# Ver tiles gerados
+ls -la ./data/derived/$SLIDE_ID/tiles/
+
+# Contar tiles por nível
+for level in ./data/derived/$SLIDE_ID/tiles/*/; do
+  echo "Level $(basename $level): $(ls $level | wc -l) tiles"
+done
 ```
 
 ## Troubleshooting
 
 ### Slide não aparece na lista
-- Verifique se a extensão é suportada: `.jpg`, `.jpeg`, `.png`, `.svs`, `.tif`, `.tiff`, `.ndpi`
+- Verifique se a extensão é suportada
 - Verifique logs: `docker compose logs api`
 - Para arquivos grandes, aguarde mais tempo (hashing pode demorar)
 
@@ -187,10 +263,15 @@ curl http://localhost:3000/v1/slides/$SLIDE_ID/tiles/0/0/0.jpg -o tile.jpg
   docker compose exec processor vipsheader /data/raw/{arquivo}.svs
   ```
 
-### Tiles não carregam
-- Verifique se o status é "ready"
-- Verifique estrutura: `ls -la ./data/derived/{slideId}/tiles/`
-- Verifique se os tiles foram normalizados corretamente
+### Tiles retornam 202 frequentemente
+- Geração on-demand pode demorar para tiles grandes
+- Verifique logs da API: `docker compose logs api`
+- Considere ajustar timeout em `tilegen-svs.js`
+
+### Tiles retornam 404
+- Verifique se coordenadas estão dentro dos limites
+- Verifique maxLevel no manifest
+- Para WSI, verifique se o raw file ainda existe
 
 ### Erro "Could not determine slide dimensions"
 - O arquivo pode estar corrompido
@@ -210,7 +291,7 @@ docker compose up -d --build
 
 ### Mapeamento de níveis DeepZoom
 
-O `vips dzsave` gera níveis no padrão DeepZoom:
+O formato DeepZoom usa níveis invertidos:
 - Nível 0: Resolução mais baixa (1 tile ou poucos)
 - Nível N (maxLevel): Resolução original
 
@@ -218,13 +299,13 @@ O `vips dzsave` gera níveis no padrão DeepZoom:
 
 ```
 maxDim = max(width, height)
-maxLevel = ceil(log2(maxDim / tileSize))
+maxLevel = ceil(log2(maxDim))
 ```
 
-Exemplo: Imagem 50000x40000 com tileSize=256:
+Exemplo: Imagem 50000x40000:
 ```
 maxDim = 50000
-maxLevel = ceil(log2(50000/256)) = ceil(7.6) = 8
+maxLevel = ceil(log2(50000)) = ceil(15.6) = 16
 ```
 
 ### Formato do nome dos tiles
@@ -237,3 +318,26 @@ Onde:
 - col: coluna (x) do tile
 - row: linha (y) do tile
 ```
+
+### Geração de tile on-demand
+
+Para um tile em `(z, x, y)`:
+1. Scale factor: `2^(maxLevel - z)`
+2. Source region no SVS:
+   - srcX = x * tileSize * scale
+   - srcY = y * tileSize * scale
+   - srcWidth = tileSize * scale
+   - srcHeight = tileSize * scale
+3. Comando vips:
+   ```bash
+   vips crop input.svs - srcX srcY srcWidth srcHeight | \
+   vips resize - output.jpg (1/scale)
+   ```
+
+### Performance
+
+| Operação | Tempo esperado |
+|----------|----------------|
+| P0 SVS (thumbnail + manifest) | ~1s |
+| Tile on-demand (primeira vez) | 100-500ms |
+| Tile cached (segunda vez) | ~10ms |

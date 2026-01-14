@@ -2,8 +2,19 @@ import { createReadStream } from 'fs';
 import { access, readFile, readdir } from 'fs/promises';
 import { join } from 'path';
 import { listSlides, getSlide, updateLevelReadyMax } from '../db/slides.js';
+import { generateTile, isTilePending, getPendingCount } from '../services/tilegen-svs.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
+
+// WSI formats that use on-demand tile generation
+const WSI_FORMATS = ['svs', 'tiff', 'ndpi', 'mrxs'];
+
+/**
+ * Check if format is a WSI format (on-demand tiles)
+ */
+function isWSIFormat(format) {
+  return WSI_FORMATS.includes(format?.toLowerCase());
+}
 
 /**
  * Calculate levelReadyMax from disk by scanning tiles directory
@@ -53,7 +64,8 @@ export default async function slidesRoutes(fastify) {
         maxLevel: s.max_level || 0,
         levelMax: s.max_level || 0,
         levelReadyMax: s.level_ready_max || 0,
-        format: s.format || 'unknown'
+        format: s.format || 'unknown',
+        onDemand: isWSIFormat(s.format)
       }))
     };
   });
@@ -91,20 +103,59 @@ export default async function slidesRoutes(fastify) {
     }
   });
 
-  // Get tile
+  // Get tile (with on-demand generation for WSI formats)
   fastify.get('/slides/:slideId/tiles/:z/:x/:y.jpg', async (request, reply) => {
     const { slideId, z, x, y } = request.params;
     const tilePath = join(DERIVED_DIR, slideId, 'tiles', z, `${x}_${y}.jpg`);
 
+    // Check if tile exists on disk
     try {
       await access(tilePath);
       reply.header('Content-Type', 'image/jpeg');
       reply.header('Cache-Control', 'public, max-age=31536000, immutable');
       return createReadStream(tilePath);
     } catch {
+      // Tile doesn't exist - check if WSI format for on-demand generation
+    }
+
+    // Get slide info to check format
+    const slide = await getSlide(slideId);
+    if (!slide) {
+      reply.code(404);
+      return { error: 'Slide not found' };
+    }
+
+    // Only generate on-demand for WSI formats
+    if (!isWSIFormat(slide.format)) {
       reply.code(404);
       return { error: 'Tile not found' };
     }
+
+    // Generate tile on-demand
+    try {
+      const result = await generateTile(slideId, parseInt(z), parseInt(x), parseInt(y));
+
+      if (result.exists || result.generated) {
+        reply.header('Content-Type', 'image/jpeg');
+        reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+        return createReadStream(result.path);
+      }
+    } catch (err) {
+      // Check if generation is taking too long or failed
+      if (isTilePending(slideId, z, x, y)) {
+        // Still generating - return 202 Accepted
+        reply.code(202);
+        reply.header('Retry-After', '1');
+        return { pending: true, message: 'Tile generation in progress' };
+      }
+
+      console.error(`Tile generation failed: ${slideId}/${z}/${x}/${y}`, err.message);
+      reply.code(404);
+      return { error: 'Tile generation failed', message: err.message };
+    }
+
+    reply.code(404);
+    return { error: 'Tile not found' };
   });
 
   // Get slide info
@@ -128,6 +179,7 @@ export default async function slidesRoutes(fastify) {
       levelMax: slide.max_level,
       levelReadyMax: slide.level_ready_max || 0,
       tileSize: slide.tile_size,
+      onDemand: isWSIFormat(slide.format),
       createdAt: slide.created_at
     };
   });
@@ -142,25 +194,38 @@ export default async function slidesRoutes(fastify) {
       return { error: 'Slide not found' };
     }
 
+    const isOnDemand = isWSIFormat(slide.format);
+
     // Get cached levelReadyMax from DB
     let levelReadyMax = slide.level_ready_max || 0;
 
-    // If status is ready and levelReadyMax is 0, scan disk and update cache
-    if (slide.status === 'ready' && levelReadyMax === 0) {
+    // For pre-generated slides, scan disk if needed
+    if (!isOnDemand && slide.status === 'ready' && levelReadyMax === 0) {
       levelReadyMax = await scanLevelReadyMax(slideId);
       if (levelReadyMax > 0) {
         await updateLevelReadyMax(slideId, levelReadyMax);
       }
     }
 
+    // For on-demand slides, always scan disk for actual state
+    if (isOnDemand) {
+      levelReadyMax = await scanLevelReadyMax(slideId);
+    }
+
     // Count tiles on disk
-    const tilesComplete = await countTilesOnDisk(slideId);
+    const tilesOnDisk = await countTilesOnDisk(slideId);
+
+    // tilesComplete is true for pre-generated slides, false for on-demand
+    const tilesComplete = !isOnDemand;
 
     return {
       slideId: slide.id,
       levelMax: slide.max_level || 0,
       levelReadyMax,
-      tilesComplete
+      tilesOnDisk,
+      tilesComplete,
+      onDemand: isOnDemand,
+      pendingGenerations: isOnDemand ? getPendingCount() : 0
     };
   });
 }

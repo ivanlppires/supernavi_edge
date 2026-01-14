@@ -1,11 +1,13 @@
 /**
- * SVS/WSI Pipeline using OpenSlide + libvips
- * Generates DeepZoom tiles using vips dzsave
+ * SVS/WSI Pipeline - Edge-First Architecture
+ *
+ * P0: Quick metadata extraction + thumbnail (instant viewer access)
+ * Tiles: Generated on-demand by API (not batch processed)
  */
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { mkdir, readdir, rename, rm, writeFile } from 'fs/promises';
+import { mkdir, writeFile } from 'fs/promises';
 import { join, basename } from 'path';
 
 const execAsync = promisify(exec);
@@ -13,7 +15,6 @@ const execAsync = promisify(exec);
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILE_SIZE = 256;
 const TILE_OVERLAP = 0;
-const TILE_QUALITY = 90;
 
 /**
  * Get slide properties using openslide-show-properties
@@ -80,7 +81,6 @@ function calculateMaxLevel(width, height) {
  * Generate thumbnail using vips
  */
 async function generateThumbnail(rawPath, outputPath) {
-  // Use vips thumbnail with openslide loader
   await execAsync(
     `vips thumbnail "${rawPath}" "${outputPath}" 256 --height 256`
   );
@@ -88,68 +88,10 @@ async function generateThumbnail(rawPath, outputPath) {
 }
 
 /**
- * Generate DeepZoom tiles using vips dzsave
- */
-async function generateDZITiles(rawPath, outputDir, slideId) {
-  const dziBasePath = join(outputDir, 'dzi');
-
-  // vips dzsave creates: dzi.dzi and dzi_files/
-  console.log(`Starting vips dzsave for ${basename(rawPath)}...`);
-
-  await execAsync(
-    `vips dzsave "${rawPath}" "${dziBasePath}" ` +
-    `--tile-size ${TILE_SIZE} ` +
-    `--overlap ${TILE_OVERLAP} ` +
-    `--suffix .jpg[Q=${TILE_QUALITY}]`
-  );
-
-  console.log('vips dzsave completed');
-  return dziBasePath;
-}
-
-/**
- * Normalize DZI output to our tile structure
- * vips creates: dzi_files/{level}/{col}_{row}.jpg
- * We need: tiles/{level}/{col}_{row}.jpg
- */
-async function normalizeTiles(outputDir) {
-  const dziFilesDir = join(outputDir, 'dzi_files');
-  const tilesDir = join(outputDir, 'tiles');
-
-  // Rename dzi_files to tiles
-  try {
-    await rm(tilesDir, { recursive: true, force: true });
-  } catch {}
-
-  await rename(dziFilesDir, tilesDir);
-  console.log(`Normalized tiles: ${dziFilesDir} -> ${tilesDir}`);
-
-  // Remove the .dzi XML file (we use our own manifest.json)
-  try {
-    await rm(join(outputDir, 'dzi.dzi'));
-  } catch {}
-
-  // Remove vips-properties.xml if it exists
-  try {
-    await rm(join(tilesDir, 'vips-properties.xml'));
-  } catch {}
-
-  // Return tile count per level (only numeric directories)
-  const entries = await readdir(tilesDir);
-  const levels = entries.filter(e => /^\d+$/.test(e));
-  const tileCount = {};
-
-  for (const level of levels) {
-    const levelPath = join(tilesDir, level);
-    const tiles = await readdir(levelPath);
-    tileCount[level] = tiles.length;
-  }
-
-  return tileCount;
-}
-
-/**
- * Process SVS/WSI file (P0 phase)
+ * Process SVS/WSI file (P0 phase) - Edge-First
+ *
+ * Only extracts metadata and generates thumbnail.
+ * Tiles are generated on-demand by the API.
  */
 export async function processSVS_P0(job) {
   const { slideId, rawPath } = job;
@@ -157,7 +99,7 @@ export async function processSVS_P0(job) {
 
   await mkdir(slideDir, { recursive: true });
 
-  console.log(`Processing SVS P0: ${basename(rawPath)}`);
+  console.log(`Processing SVS P0 (edge-first): ${basename(rawPath)}`);
 
   // Get slide dimensions
   const { width, height } = await getSlideProperties(rawPath);
@@ -170,27 +112,15 @@ export async function processSVS_P0(job) {
   const maxLevel = calculateMaxLevel(width, height);
   console.log(`Max level: ${maxLevel}`);
 
-  // Generate thumbnail first (quick)
+  // Generate thumbnail (quick)
   const thumbPath = join(slideDir, 'thumb.jpg');
   await generateThumbnail(rawPath, thumbPath);
 
-  // Generate all tiles with vips dzsave
-  // Note: vips dzsave generates all levels at once, so P0/P1 separation
-  // is less relevant here. We mark as "ready" after generation completes.
-  await generateDZITiles(rawPath, slideDir, slideId);
+  // Create tiles directory (tiles generated on-demand)
+  const tilesDir = join(slideDir, 'tiles');
+  await mkdir(tilesDir, { recursive: true });
 
-  // Normalize tile directory structure
-  const tileCount = await normalizeTiles(slideDir);
-
-  console.log('Tile levels generated:');
-  for (const [level, count] of Object.entries(tileCount).sort((a, b) => Number(a[0]) - Number(b[0]))) {
-    console.log(`  Level ${level}: ${count} tiles`);
-  }
-
-  const totalTiles = Object.values(tileCount).reduce((a, b) => a + b, 0);
-  console.log(`Total tiles: ${totalTiles}`);
-
-  // Generate manifest after tiles are ready (includes actual level info)
+  // Generate manifest immediately (viewer can start)
   const manifest = {
     protocol: 'dzi',
     tileSize: TILE_SIZE,
@@ -201,29 +131,31 @@ export async function processSVS_P0(job) {
     levelMin: 0,
     levelMax: maxLevel,
     tilePathPattern: 'tiles/{z}/{x}_{y}.jpg',
-    tileUrlTemplate: `/v1/slides/${slideId}/tiles/{z}/{x}/{y}.jpg`
+    tileUrlTemplate: `/v1/slides/${slideId}/tiles/{z}/{x}/{y}.jpg`,
+    onDemand: true  // Tiles generated on-demand
   };
 
   const manifestPath = join(slideDir, 'manifest.json');
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2));
   console.log(`Generated manifest: ${manifestPath}`);
 
+  console.log(`SVS P0 complete - viewer ready (tiles on-demand)`);
+
   return {
     width,
     height,
     maxLevel,
-    p0MaxLevel: maxLevel, // SVS generates all levels at once
-    levelReadyMax: maxLevel,
+    p0MaxLevel: 0,        // No tiles pre-generated
+    levelReadyMax: 0,     // Tiles generated on-demand
     thumbPath,
-    manifestPath,
-    tileCount
+    manifestPath
   };
 }
 
 /**
- * P1 for SVS is a no-op since vips dzsave generates everything at once
+ * P1 for SVS is a no-op (tiles are generated on-demand by API)
  */
 export async function processSVS_P1(job) {
-  console.log(`SVS P1: Nothing to do (dzsave generates all levels at once)`);
-  return { completed: true };
+  console.log(`SVS P1: No-op (tiles generated on-demand)`);
+  return { completed: true, levelReadyMax: 0 };
 }
