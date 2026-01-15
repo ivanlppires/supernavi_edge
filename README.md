@@ -1,15 +1,18 @@
-# SuperNavi Local Agent
-Instalação Local – Patologia Digital (Edge-First)
+# SuperNavi EDGE v1.0
+
+**Status: Pronto para Produção**
+
+Agente local para patologia digital com arquitetura edge-first.
 
 ---
 
 ## Arquitetura Edge-First
 
-O SuperNavi Local Agent implementa uma arquitetura **edge-first** otimizada para patologia digital:
+O SuperNavi EDGE implementa uma arquitetura **edge-first** otimizada para patologia digital:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    SuperNavi Local Agent                         │
+│                      SuperNavi EDGE v1.0                         │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────┐    ┌───────────┐    ┌──────┐    ┌───────┐         │
 │  │   API   │◄──►│ Processor │◄──►│Redis │    │  Sync │         │
@@ -344,9 +347,9 @@ tiles/
 
 ---
 
-## O que é o SuperNavi Local Agent?
+## O que é o SuperNavi EDGE?
 
-O **SuperNavi Local Agent** é o componente local da plataforma SuperNavi para **patologia digital**.
+O **SuperNavi EDGE** é o componente local da plataforma SuperNavi para **patologia digital**.
 
 Ele roda **diretamente na máquina do patologista**, permitindo:
 
@@ -381,20 +384,20 @@ A experiência é a **mesma** no modo local e no modo remoto.
 
 ## Download
 
-👉 **Baixe o instalador oficial do SuperNavi Local Agent:**
+👉 **Baixe o instalador oficial do SuperNavi EDGE:**
 
-🔗 **[Download SuperNavi Local Agent – Windows](#)**  
+🔗 **[Download SuperNavi EDGE v1.0 – Windows](#)**
 *(link será disponibilizado na aba Releases)*
 
 Arquivo:
-SuperNavi_Local_Agent_Setup.exe
+SuperNavi_EDGE_Setup.exe
 
 
 ---
 
 ## Instalação
 
-1. Faça o download do arquivo `SuperNavi_Local_Agent_Setup.exe`
+1. Faça o download do arquivo `SuperNavi_EDGE_Setup.exe`
 2. Clique duas vezes para iniciar o instalador
 3. Siga os passos na tela (Avançar → Avançar → Concluir)
 4. Ao final da instalação, o agente será iniciado automaticamente
@@ -410,7 +413,7 @@ Durante a instalação:
 
 Após a instalação:
 
-1. Abra o **SuperNavi Local Agent**
+1. Abra o **SuperNavi EDGE**
 2. Informe sua **chave de licença** (fornecida após a assinatura)
 3. Escolha a pasta onde o scanner salva as lâminas digitais
 4. Conclua a configuração inicial
@@ -482,7 +485,7 @@ Em caso de dúvidas ou necessidade de suporte:
 
 ## Licença
 
-O SuperNavi Local Agent é um **software proprietário**.
+O SuperNavi EDGE é um **software proprietário**.
 
 - Uso permitido apenas mediante assinatura ativa
 - É proibida a redistribuição, cópia ou engenharia reversa
