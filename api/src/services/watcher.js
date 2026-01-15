@@ -5,6 +5,7 @@ import { pipeline } from 'stream/promises';
 import { hashFile } from '../lib/hash.js';
 import { enqueueJob } from '../lib/queue.js';
 import { createSlide, createJob } from '../db/slides.js';
+import { eventBus } from './events.js';
 
 // Supported formats by category
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png'];
@@ -105,6 +106,9 @@ async function processFile(filePath) {
     });
 
     console.log(`Imported slide ${slideId.substring(0, 12)}... (${originalName}) [${format}]`);
+
+    // Emit SSE event for slide import
+    eventBus.emitSlideImport(slideId, originalName, format);
   } catch (err) {
     console.error(`Error processing ${originalName}:`, err.message);
   }

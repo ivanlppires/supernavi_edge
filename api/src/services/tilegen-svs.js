@@ -10,6 +10,7 @@ import { promisify } from 'util';
 import { mkdir, access, readFile, unlink } from 'fs/promises';
 import { join, dirname } from 'path';
 import { query } from '../db/index.js';
+import { eventBus } from './events.js';
 
 const execAsync = promisify(exec);
 
@@ -201,6 +202,9 @@ export async function generateTile(slideId, z, x, y) {
     return pendingTiles.get(tileKey);
   }
 
+  // Emit tile pending event
+  eventBus.emitTilePending(slideId, z, x, y);
+
   // Start new generation
   const generationPromise = (async () => {
     try {
@@ -208,6 +212,12 @@ export async function generateTile(slideId, z, x, y) {
       const manifest = await getSlideInfo(slideId);
 
       const result = await generateTileVips(rawPath, tilePath, z, x, y, manifest);
+
+      // Emit tile generated event on success
+      if (result.generated) {
+        eventBus.emitTileGenerated(slideId, z, x, y);
+      }
+
       return result;
     } finally {
       // Clean up lock after generation completes (success or failure)

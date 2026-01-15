@@ -108,7 +108,7 @@ export default async function slidesRoutes(fastify) {
     const { slideId, z, x, y } = request.params;
     const tilePath = join(DERIVED_DIR, slideId, 'tiles', z, `${x}_${y}.jpg`);
 
-    // Check if tile exists on disk
+    // Check if tile exists on disk (fast path)
     try {
       await access(tilePath);
       reply.header('Content-Type', 'image/jpeg');
@@ -118,17 +118,24 @@ export default async function slidesRoutes(fastify) {
       // Tile doesn't exist - check if WSI format for on-demand generation
     }
 
+    // Check if tile is already being generated (return 503 immediately)
+    if (isTilePending(slideId, z, x, y)) {
+      reply.code(503);
+      reply.header('Retry-After', '1');
+      return reply.send();
+    }
+
     // Get slide info to check format
     const slide = await getSlide(slideId);
     if (!slide) {
       reply.code(404);
-      return { error: 'Slide not found' };
+      return reply.send();
     }
 
     // Only generate on-demand for WSI formats
     if (!isWSIFormat(slide.format)) {
       reply.code(404);
-      return { error: 'Tile not found' };
+      return reply.send();
     }
 
     // Generate tile on-demand
@@ -141,21 +148,20 @@ export default async function slidesRoutes(fastify) {
         return createReadStream(result.path);
       }
     } catch (err) {
-      // Check if generation is taking too long or failed
+      // Check if generation is still pending (concurrent request started it)
       if (isTilePending(slideId, z, x, y)) {
-        // Still generating - return 202 Accepted
-        reply.code(202);
+        reply.code(503);
         reply.header('Retry-After', '1');
-        return { pending: true, message: 'Tile generation in progress' };
+        return reply.send();
       }
 
       console.error(`Tile generation failed: ${slideId}/${z}/${x}/${y}`, err.message);
       reply.code(404);
-      return { error: 'Tile generation failed', message: err.message };
+      return reply.send();
     }
 
     reply.code(404);
-    return { error: 'Tile not found' };
+    return reply.send();
   });
 
   // Get slide info

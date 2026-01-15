@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SuperNavi Viewer Test</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/openseadragon.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #1a1a2e;
+      color: #eee;
+      height: 100vh;
+      display: flex;
+    }
+    .sidebar {
+      width: 320px;
+      background: #16213e;
+      padding: 16px;
+      overflow-y: auto;
+      border-right: 1px solid #0f3460;
+      flex-shrink: 0;
+    }
+    .sidebar h1 {
+      font-size: 18px;
+      margin-bottom: 16px;
+      color: #e94560;
+    }
+    .sidebar h2 {
+      font-size: 14px;
+      margin: 16px 0 8px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .slide-input {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .slide-input input {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #0f3460;
+      border-radius: 4px;
+      background: #1a1a2e;
+      color: #eee;
+      font-size: 14px;
+    }
+    .slide-input input:focus {
+      outline: none;
+      border-color: #e94560;
+    }
+    .slide-input button, .btn {
+      padding: 8px 16px;
+      background: #e94560;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .slide-input button:hover, .btn:hover {
+      background: #ff6b6b;
+    }
+    .btn.secondary {
+      background: #0f3460;
+    }
+    .btn.secondary:hover {
+      background: #1a4a7a;
+    }
+    .btn.small {
+      padding: 4px 8px;
+      font-size: 11px;
+    }
+    .slide-list {
+      list-style: none;
+    }
+    .slide-item {
+      padding: 12px;
+      background: #1a1a2e;
+      border-radius: 6px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .slide-item:hover {
+      background: #0f3460;
+    }
+    .slide-item.active {
+      border: 2px solid #e94560;
+    }
+    .slide-item .filename {
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 4px;
+      word-break: break-all;
+    }
+    .slide-item .meta {
+      font-size: 11px;
+      color: #888;
+    }
+    .slide-item .status {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .slide-item .status.ready { background: #27ae60; color: white; }
+    .slide-item .status.processing { background: #f39c12; color: white; }
+    .slide-item .status.queued { background: #3498db; color: white; }
+    .slide-item .status.failed { background: #e74c3c; color: white; }
+    .availability {
+      background: #1a1a2e;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 12px;
+    }
+    .availability .row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .availability .label { color: #888; }
+    .availability .value { font-weight: 500; }
+    .availability .value.on-demand { color: #f39c12; }
+    .events-log {
+      background: #1a1a2e;
+      padding: 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-family: monospace;
+      max-height: 150px;
+      overflow-y: auto;
+    }
+    .events-log .event {
+      margin-bottom: 4px;
+      padding: 4px;
+      border-radius: 3px;
+    }
+    .events-log .event.slide-import { background: #2980b9; }
+    .events-log .event.slide-ready { background: #27ae60; }
+    .events-log .event.tile-pending { background: #f39c12; color: #111; }
+    .events-log .event.tile-generated { background: #16a085; }
+    .events-log .event.annotation-created { background: #9b59b6; }
+    .events-log .event.annotation-updated { background: #8e44ad; }
+    .events-log .event.annotation-deleted { background: #c0392b; }
+    .viewer-container {
+      flex: 1;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      padding: 10px;
+      background: #16213e;
+      border-bottom: 1px solid #0f3460;
+      align-items: center;
+    }
+    .toolbar-group {
+      display: flex;
+      gap: 4px;
+      padding-right: 12px;
+      border-right: 1px solid #0f3460;
+    }
+    .toolbar-group:last-child {
+      border-right: none;
+    }
+    .tool-btn {
+      width: 36px;
+      height: 36px;
+      border: 1px solid #0f3460;
+      border-radius: 4px;
+      background: #1a1a2e;
+      color: #eee;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+    .tool-btn:hover {
+      background: #0f3460;
+    }
+    .tool-btn.active {
+      background: #e94560;
+      border-color: #e94560;
+    }
+    .tool-btn[disabled] {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .color-picker {
+      width: 36px;
+      height: 36px;
+      border: 2px solid #0f3460;
+      border-radius: 4px;
+      cursor: pointer;
+      padding: 0;
+    }
+    .toolbar-label {
+      font-size: 11px;
+      color: #888;
+      margin-right: 4px;
+    }
+    #viewer {
+      flex: 1;
+      background: #0f0f23;
+      position: relative;
+    }
+    .no-slide {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: #666;
+      font-size: 18px;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+    .connection-status {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 500;
+      z-index: 100;
+    }
+    .connection-status.connected { background: #27ae60; color: white; }
+    .connection-status.disconnected { background: #e74c3c; color: white; }
+    .annotation-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .annotation-overlay.drawing {
+      pointer-events: auto;
+      cursor: crosshair;
+    }
+    .annotation-overlay svg {
+      width: 100%;
+      height: 100%;
+    }
+    .annotation-shape {
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .annotation-shape:hover {
+      filter: brightness(1.2);
+    }
+    .annotation-shape.selected {
+      filter: drop-shadow(0 0 4px #fff);
+    }
+    .annotations-list {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .annotation-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      background: #1a1a2e;
+      border-radius: 4px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+    .annotation-item:hover {
+      background: #0f3460;
+    }
+    .annotation-item.selected {
+      border: 1px solid #e94560;
+    }
+    .annotation-item .info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .annotation-item .color-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+    .annotation-item .type {
+      text-transform: capitalize;
+    }
+    .annotation-item .actions {
+      display: flex;
+      gap: 4px;
+    }
+    .drawing-hint {
+      position: absolute;
+      bottom: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.8);
+      color: #fff;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      z-index: 100;
+      display: none;
+    }
+    .drawing-hint.visible {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="sidebar">
+    <h1>SuperNavi Viewer</h1>
+
+    <div class="slide-input">
+      <input type="text" id="slideIdInput" placeholder="Paste slideId...">
+      <button onclick="loadSlideById()">Load</button>
+    </div>
+
+    <h2>Available Slides</h2>
+    <ul class="slide-list" id="slideList">
+      <li style="color: #666; font-size: 13px;">Loading...</li>
+    </ul>
+
+    <h2>Annotations</h2>
+    <div class="annotations-list" id="annotationsList">
+      <div style="color: #666; font-size: 12px; padding: 8px;">No annotations</div>
+    </div>
+
+    <h2>Current Slide</h2>
+    <div class="availability" id="availability">
+      <div style="color: #666;">No slide selected</div>
+    </div>
+
+    <h2>Events</h2>
+    <div class="events-log" id="eventsLog">
+      <div style="color: #666;">Connecting...</div>
+    </div>
+  </div>
+
+  <div class="viewer-container">
+    <div class="toolbar">
+      <div class="toolbar-group">
+        <button class="tool-btn" id="toolPan" title="Pan (V)" onclick="setTool('pan')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 11V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v0M14 10V4a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v2M10 10.5V6a2 2 0 0 0-2-2v0a2 2 0 0 0-2 2v8"/>
+            <path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
+          </svg>
+        </button>
+      </div>
+      <div class="toolbar-group">
+        <button class="tool-btn" id="toolRect" title="Rectangle (R)" onclick="setTool('rectangle')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+          </svg>
+        </button>
+        <button class="tool-btn" id="toolEllipse" title="Ellipse (E)" onclick="setTool('ellipse')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <ellipse cx="12" cy="12" rx="10" ry="7"/>
+          </svg>
+        </button>
+        <button class="tool-btn" id="toolPolygon" title="Polygon (P)" onclick="setTool('polygon')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2l9 7-3.5 9h-11L3 9z"/>
+          </svg>
+        </button>
+        <button class="tool-btn" id="toolFreehand" title="Freehand (F)" onclick="setTool('freehand')">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 17c3-3 6-11 9-11s3 8 6 8 3-4 3-4"/>
+          </svg>
+        </button>
+      </div>
+      <div class="toolbar-group">
+        <span class="toolbar-label">Color:</span>
+        <input type="color" class="color-picker" id="strokeColor" value="#e94560" title="Stroke Color">
+      </div>
+      <div class="toolbar-group">
+        <button class="tool-btn" id="deleteBtn" title="Delete Selected (Del)" onclick="deleteSelectedAnnotation()" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <div id="viewer">
+      <div class="no-slide" id="noSlide">Select a slide to view</div>
+      <div class="annotation-overlay" id="annotationOverlay">
+        <svg id="annotationSvg"></svg>
+      </div>
+      <div class="drawing-hint" id="drawingHint">Click to add points. Double-click to finish.</div>
+    </div>
+    <div class="connection-status disconnected" id="connectionStatus">Disconnected</div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://localhost:3000/v1';
+    const AUTHOR_ID = 'viewer-user-' + Math.random().toString(36).substr(2, 9);
+
+    let viewer = null;
+    let currentSlideId = null;
+    let availabilityInterval = null;
+    let eventSource = null;
+    let currentTool = 'pan';
+    let annotations = [];
+    let selectedAnnotationId = null;
+    let isDrawing = false;
+    let drawingPoints = [];
+    let tempShape = null;
+    let slideWidth = 0;
+    let slideHeight = 0;
+    const maxEvents = 50;
+
+    // Initialize OpenSeadragon viewer
+    function initViewer() {
+      viewer = OpenSeadragon({
+        id: 'viewer',
+        prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.0/images/',
+        showNavigator: true,
+        navigatorPosition: 'BOTTOM_RIGHT',
+        navigatorSizeRatio: 0.15,
+        animationTime: 0.5,
+        blendTime: 0.1,
+        minZoomImageRatio: 0.8,
+        maxZoomPixelRatio: 2,
+        visibilityRatio: 0.5,
+        constrainDuringPan: true,
+        timeout: 120000,
+        loadTilesWithAjax: true,
+        ajaxHeaders: {},
+      });
+
+      viewer.addHandler('tile-load-failed', function(event) {
+        const tile = event.tile;
+        if (event.message && event.message.includes('503')) {
+          setTimeout(() => {
+            tile.loaded = false;
+            tile.loading = false;
+            if (viewer.world.getItemAt(0)?.tilesMatrix[tile.level]) {
+              delete viewer.world.getItemAt(0).tilesMatrix[tile.level][tile.x]?.[tile.y];
+            }
+            viewer.world.getItemAt(0)._needsDraw = true;
+            viewer.forceRedraw();
+          }, 1000);
+        }
+      });
+
+      // Update annotations on viewport change
+      viewer.addHandler('animation', renderAnnotations);
+      viewer.addHandler('animation-finish', renderAnnotations);
+      viewer.addHandler('resize', renderAnnotations);
+
+      setTool('pan');
+    }
+
+    // Set current drawing tool
+    function setTool(tool) {
+      currentTool = tool;
+      document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+      const toolBtn = document.getElementById('tool' + tool.charAt(0).toUpperCase() + tool.slice(1));
+      if (toolBtn) toolBtn.classList.add('active');
+      if (tool === 'pan') {
+        document.getElementById('toolPan').classList.add('active');
+      }
+
+      const overlay = document.getElementById('annotationOverlay');
+      overlay.classList.toggle('drawing', tool !== 'pan');
+
+      // Cancel any in-progress drawing
+      cancelDrawing();
+
+      // Update hint
+      updateDrawingHint();
+    }
+
+    function updateDrawingHint() {
+      const hint = document.getElementById('drawingHint');
+      if (currentTool === 'polygon') {
+        hint.textContent = 'Click to add points. Double-click or press Enter to finish.';
+        hint.classList.toggle('visible', isDrawing);
+      } else if (currentTool === 'freehand') {
+        hint.textContent = 'Click and drag to draw. Release to finish.';
+        hint.classList.toggle('visible', currentTool === 'freehand' && !isDrawing);
+      } else {
+        hint.classList.remove('visible');
+      }
+    }
+
+    // Convert viewport coordinates to image coordinates
+    function viewportToImage(point) {
+      const viewportPoint = viewer.viewport.pointFromPixel(new OpenSeadragon.Point(point.x, point.y));
+      return {
+        x: Math.round(viewportPoint.x * slideWidth),
+        y: Math.round(viewportPoint.y * slideWidth) // OSD uses width for both dimensions
+      };
+    }
+
+    // Convert image coordinates to screen coordinates
+    function imageToScreen(point) {
+      const viewportPoint = new OpenSeadragon.Point(point.x / slideWidth, point.y / slideWidth);
+      const screenPoint = viewer.viewport.pixelFromPoint(viewportPoint);
+      return { x: screenPoint.x, y: screenPoint.y };
+    }
+
+    // Drawing event handlers
+    function setupDrawingHandlers() {
+      const overlay = document.getElementById('annotationOverlay');
+
+      overlay.addEventListener('mousedown', handleDrawStart);
+      overlay.addEventListener('mousemove', handleDrawMove);
+      overlay.addEventListener('mouseup', handleDrawEnd);
+      overlay.addEventListener('dblclick', handleDrawComplete);
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          cancelDrawing();
+          setTool('pan');
+        }
+        if (e.key === 'Enter' && isDrawing && currentTool === 'polygon') {
+          finishPolygon();
+        }
+        if (e.key === 'Delete' && selectedAnnotationId) {
+          deleteSelectedAnnotation();
+        }
+        // Keyboard shortcuts
+        if (!isDrawing) {
+          if (e.key === 'v' || e.key === 'V') setTool('pan');
+          if (e.key === 'r' || e.key === 'R') setTool('rectangle');
+          if (e.key === 'e' || e.key === 'E') setTool('ellipse');
+          if (e.key === 'p' || e.key === 'P') setTool('polygon');
+          if (e.key === 'f' || e.key === 'F') setTool('freehand');
+        }
+      });
+    }
+
+    function handleDrawStart(e) {
+      if (currentTool === 'pan') return;
+      if (e.target.classList.contains('annotation-shape')) return;
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const imagePoint = viewportToImage(point);
+
+      if (currentTool === 'rectangle' || currentTool === 'ellipse') {
+        isDrawing = true;
+        drawingPoints = [imagePoint];
+        selectedAnnotationId = null;
+        updateAnnotationsList();
+      } else if (currentTool === 'polygon') {
+        if (!isDrawing) {
+          isDrawing = true;
+          drawingPoints = [imagePoint];
+        } else {
+          drawingPoints.push(imagePoint);
+        }
+        updateDrawingHint();
+      } else if (currentTool === 'freehand') {
+        isDrawing = true;
+        drawingPoints = [imagePoint];
+      }
+
+      renderAnnotations();
+    }
+
+    function handleDrawMove(e) {
+      if (!isDrawing) return;
+      if (currentTool === 'pan') return;
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const point = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      const imagePoint = viewportToImage(point);
+
+      if (currentTool === 'rectangle' || currentTool === 'ellipse') {
+        drawingPoints[1] = imagePoint;
+      } else if (currentTool === 'freehand') {
+        drawingPoints.push(imagePoint);
+      }
+
+      renderAnnotations();
+    }
+
+    function handleDrawEnd(e) {
+      if (!isDrawing) return;
+
+      if (currentTool === 'rectangle' || currentTool === 'ellipse') {
+        if (drawingPoints.length >= 2) {
+          createAnnotationFromDrawing();
+        }
+        isDrawing = false;
+        drawingPoints = [];
+      } else if (currentTool === 'freehand') {
+        if (drawingPoints.length >= 3) {
+          createAnnotationFromDrawing();
+        }
+        isDrawing = false;
+        drawingPoints = [];
+      }
+      // Polygon continues until double-click
+
+      renderAnnotations();
+    }
+
+    function handleDrawComplete(e) {
+      if (currentTool === 'polygon' && isDrawing) {
+        finishPolygon();
+      }
+    }
+
+    function finishPolygon() {
+      if (drawingPoints.length >= 3) {
+        createAnnotationFromDrawing();
+      }
+      isDrawing = false;
+      drawingPoints = [];
+      updateDrawingHint();
+      renderAnnotations();
+    }
+
+    function cancelDrawing() {
+      isDrawing = false;
+      drawingPoints = [];
+      tempShape = null;
+      updateDrawingHint();
+      renderAnnotations();
+    }
+
+    // Create annotation from drawing
+    async function createAnnotationFromDrawing() {
+      if (!currentSlideId) return;
+
+      let geometry;
+      const strokeColor = document.getElementById('strokeColor').value;
+
+      if (currentTool === 'rectangle') {
+        const x = Math.min(drawingPoints[0].x, drawingPoints[1].x);
+        const y = Math.min(drawingPoints[0].y, drawingPoints[1].y);
+        const width = Math.abs(drawingPoints[1].x - drawingPoints[0].x);
+        const height = Math.abs(drawingPoints[1].y - drawingPoints[0].y);
+        if (width < 10 || height < 10) return; // Too small
+        geometry = { x, y, width, height };
+      } else if (currentTool === 'ellipse') {
+        const cx = (drawingPoints[0].x + drawingPoints[1].x) / 2;
+        const cy = (drawingPoints[0].y + drawingPoints[1].y) / 2;
+        const rx = Math.abs(drawingPoints[1].x - drawingPoints[0].x) / 2;
+        const ry = Math.abs(drawingPoints[1].y - drawingPoints[0].y) / 2;
+        if (rx < 5 || ry < 5) return; // Too small
+        geometry = { cx, cy, rx, ry };
+      } else if (currentTool === 'polygon' || currentTool === 'freehand') {
+        // Simplify freehand points
+        let points = drawingPoints;
+        if (currentTool === 'freehand' && points.length > 50) {
+          const step = Math.ceil(points.length / 50);
+          points = points.filter((_, i) => i % step === 0);
+        }
+        geometry = { points };
+      }
+
+      const idempotencyKey = 'draw-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+
+      try {
+        const res = await fetch(`${API_BASE}/slides/${currentSlideId}/annotations`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: currentTool,
+            geometry,
+            style: {
+              strokeColor,
+              fillColor: strokeColor + '33',
+              strokeWidth: 2
+            },
+            authorId: AUTHOR_ID,
+            idempotencyKey
+          })
+        });
+
+        if (res.ok) {
+          await fetchAnnotations();
+        }
+      } catch (err) {
+        console.error('Failed to create annotation:', err);
+      }
+    }
+
+    // Delete selected annotation
+    async function deleteSelectedAnnotation() {
+      if (!selectedAnnotationId) return;
+
+      const annotation = annotations.find(a => a.annotationId === selectedAnnotationId);
+      if (!annotation) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/annotations/${selectedAnnotationId}?expectedVersion=${annotation.version}`, {
+          method: 'DELETE'
+        });
+
+        if (res.ok || res.status === 204) {
+          selectedAnnotationId = null;
+          await fetchAnnotations();
+        } else if (res.status === 409) {
+          // Version conflict - refetch and retry
+          await fetchAnnotations();
+          alert('Annotation was modified. Please try again.');
+        }
+      } catch (err) {
+        console.error('Failed to delete annotation:', err);
+      }
+    }
+
+    // Fetch annotations for current slide
+    async function fetchAnnotations() {
+      if (!currentSlideId) {
+        annotations = [];
+        renderAnnotations();
+        updateAnnotationsList();
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/slides/${currentSlideId}/annotations`);
+        const data = await res.json();
+        annotations = data.items || [];
+        renderAnnotations();
+        updateAnnotationsList();
+      } catch (err) {
+        console.error('Failed to fetch annotations:', err);
+      }
+    }
+
+    // Render annotations on SVG overlay
+    function renderAnnotations() {
+      const svg = document.getElementById('annotationSvg');
+      if (!viewer || !viewer.world.getItemAt(0)) {
+        svg.innerHTML = '';
+        return;
+      }
+
+      let html = '';
+      const strokeColor = document.getElementById('strokeColor').value;
+
+      // Render existing annotations
+      for (const ann of annotations) {
+        html += renderAnnotationShape(ann, ann.annotationId === selectedAnnotationId);
+      }
+
+      // Render in-progress drawing
+      if (isDrawing && drawingPoints.length > 0) {
+        if (currentTool === 'rectangle' && drawingPoints.length >= 2) {
+          const p1 = imageToScreen(drawingPoints[0]);
+          const p2 = imageToScreen(drawingPoints[1]);
+          const x = Math.min(p1.x, p2.x);
+          const y = Math.min(p1.y, p2.y);
+          const w = Math.abs(p2.x - p1.x);
+          const h = Math.abs(p2.y - p1.y);
+          html += `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${strokeColor}33" stroke="${strokeColor}" stroke-width="2" stroke-dasharray="5,5"/>`;
+        } else if (currentTool === 'ellipse' && drawingPoints.length >= 2) {
+          const p1 = imageToScreen(drawingPoints[0]);
+          const p2 = imageToScreen(drawingPoints[1]);
+          const cx = (p1.x + p2.x) / 2;
+          const cy = (p1.y + p2.y) / 2;
+          const rx = Math.abs(p2.x - p1.x) / 2;
+          const ry = Math.abs(p2.y - p1.y) / 2;
+          html += `<ellipse cx="${cx}" cy="${cy}" rx="${rx}" ry="${ry}" fill="${strokeColor}33" stroke="${strokeColor}" stroke-width="2" stroke-dasharray="5,5"/>`;
+        } else if ((currentTool === 'polygon' || currentTool === 'freehand') && drawingPoints.length > 0) {
+          const screenPoints = drawingPoints.map(p => imageToScreen(p));
+          const pointsStr = screenPoints.map(p => `${p.x},${p.y}`).join(' ');
+          if (currentTool === 'polygon') {
+            html += `<polygon points="${pointsStr}" fill="${strokeColor}33" stroke="${strokeColor}" stroke-width="2" stroke-dasharray="5,5"/>`;
+            // Draw vertices
+            for (const p of screenPoints) {
+              html += `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${strokeColor}"/>`;
+            }
+          } else {
+            html += `<polyline points="${pointsStr}" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-dasharray="5,5"/>`;
+          }
+        }
+      }
+
+      svg.innerHTML = html;
+
+      // Add click handlers for selection
+      svg.querySelectorAll('.annotation-shape').forEach(shape => {
+        shape.addEventListener('click', (e) => {
+          e.stopPropagation();
+          selectAnnotation(shape.dataset.id);
+        });
+      });
+    }
+
+    function renderAnnotationShape(ann, selected) {
+      const style = ann.style || {};
+      const stroke = style.strokeColor || '#e94560';
+      const fill = style.fillColor || stroke + '33';
+      const strokeWidth = style.strokeWidth || 2;
+      const selectedClass = selected ? 'selected' : '';
+
+      if (ann.type === 'rectangle') {
+        const topLeft = imageToScreen({ x: ann.geometry.x, y: ann.geometry.y });
+        const bottomRight = imageToScreen({
+          x: ann.geometry.x + ann.geometry.width,
+          y: ann.geometry.y + ann.geometry.height
+        });
+        const w = bottomRight.x - topLeft.x;
+        const h = bottomRight.y - topLeft.y;
+        return `<rect class="annotation-shape ${selectedClass}" data-id="${ann.annotationId}" x="${topLeft.x}" y="${topLeft.y}" width="${w}" height="${h}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/>`;
+      } else if (ann.type === 'ellipse') {
+        const center = imageToScreen({ x: ann.geometry.cx, y: ann.geometry.cy });
+        const edge = imageToScreen({ x: ann.geometry.cx + ann.geometry.rx, y: ann.geometry.cy + ann.geometry.ry });
+        const rx = Math.abs(edge.x - center.x);
+        const ry = Math.abs(edge.y - center.y);
+        return `<ellipse class="annotation-shape ${selectedClass}" data-id="${ann.annotationId}" cx="${center.x}" cy="${center.y}" rx="${rx}" ry="${ry}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/>`;
+      } else if (ann.type === 'polygon' || ann.type === 'freehand') {
+        const screenPoints = ann.geometry.points.map(p => imageToScreen(p));
+        const pointsStr = screenPoints.map(p => `${p.x},${p.y}`).join(' ');
+        return `<polygon class="annotation-shape ${selectedClass}" data-id="${ann.annotationId}" points="${pointsStr}" fill="${fill}" stroke="${stroke}" stroke-width="${strokeWidth}"/>`;
+      }
+      return '';
+    }
+
+    function selectAnnotation(annotationId) {
+      if (currentTool !== 'pan') return;
+      selectedAnnotationId = annotationId;
+      document.getElementById('deleteBtn').disabled = !selectedAnnotationId;
+      renderAnnotations();
+      updateAnnotationsList();
+    }
+
+    function updateAnnotationsList() {
+      const list = document.getElementById('annotationsList');
+      if (annotations.length === 0) {
+        list.innerHTML = '<div style="color: #666; font-size: 12px; padding: 8px;">No annotations</div>';
+        return;
+      }
+
+      list.innerHTML = annotations.map(ann => {
+        const color = ann.style?.strokeColor || '#e94560';
+        const selected = ann.annotationId === selectedAnnotationId;
+        return `
+          <div class="annotation-item ${selected ? 'selected' : ''}" onclick="selectAnnotation('${ann.annotationId}')">
+            <div class="info">
+              <div class="color-dot" style="background: ${color}"></div>
+              <span class="type">${ann.type}</span>
+              <span style="color: #666; font-size: 10px;">v${ann.version}</span>
+            </div>
+            <div class="actions">
+              <button class="btn small secondary" onclick="event.stopPropagation(); zoomToAnnotation('${ann.annotationId}')" title="Zoom to">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById('deleteBtn').disabled = !selectedAnnotationId;
+    }
+
+    function zoomToAnnotation(annotationId) {
+      const ann = annotations.find(a => a.annotationId === annotationId);
+      if (!ann || !viewer) return;
+
+      let bounds;
+      if (ann.type === 'rectangle') {
+        bounds = {
+          x: ann.geometry.x / slideWidth,
+          y: ann.geometry.y / slideWidth,
+          width: ann.geometry.width / slideWidth,
+          height: ann.geometry.height / slideWidth
+        };
+      } else if (ann.type === 'ellipse') {
+        bounds = {
+          x: (ann.geometry.cx - ann.geometry.rx) / slideWidth,
+          y: (ann.geometry.cy - ann.geometry.ry) / slideWidth,
+          width: (ann.geometry.rx * 2) / slideWidth,
+          height: (ann.geometry.ry * 2) / slideWidth
+        };
+      } else if (ann.geometry.points) {
+        const xs = ann.geometry.points.map(p => p.x);
+        const ys = ann.geometry.points.map(p => p.y);
+        const minX = Math.min(...xs);
+        const minY = Math.min(...ys);
+        const maxX = Math.max(...xs);
+        const maxY = Math.max(...ys);
+        bounds = {
+          x: minX / slideWidth,
+          y: minY / slideWidth,
+          width: (maxX - minX) / slideWidth,
+          height: (maxY - minY) / slideWidth
+        };
+      }
+
+      if (bounds) {
+        // Add padding
+        const padding = 0.2;
+        bounds.x -= bounds.width * padding;
+        bounds.y -= bounds.height * padding;
+        bounds.width *= (1 + padding * 2);
+        bounds.height *= (1 + padding * 2);
+
+        viewer.viewport.fitBounds(new OpenSeadragon.Rect(bounds.x, bounds.y, bounds.width, bounds.height));
+      }
+
+      selectAnnotation(annotationId);
+    }
+
+    // Load slide by ID
+    async function loadSlide(slideId) {
+      if (!slideId) return;
+
+      currentSlideId = slideId;
+      selectedAnnotationId = null;
+      document.getElementById('slideIdInput').value = slideId;
+      document.getElementById('noSlide').style.display = 'none';
+
+      document.querySelectorAll('.slide-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.slideId === slideId);
+      });
+
+      try {
+        const manifestRes = await fetch(`${API_BASE}/slides/${slideId}/manifest`);
+        if (!manifestRes.ok) throw new Error('Manifest not found');
+        const manifest = await manifestRes.json();
+
+        slideWidth = manifest.width;
+        slideHeight = manifest.height;
+
+        const tileSource = {
+          width: manifest.width,
+          height: manifest.height,
+          tileSize: manifest.tileSize,
+          tileOverlap: manifest.overlap || 0,
+          minLevel: manifest.levelMin || 0,
+          maxLevel: manifest.levelMax,
+          getTileUrl: function(level, x, y) {
+            return `${API_BASE}/slides/${slideId}/tiles/${level}/${x}/${y}.jpg`;
+          }
+        };
+
+        viewer.close();
+        viewer.open(tileSource);
+
+        startAvailabilityPolling(slideId);
+        await fetchAnnotations();
+
+      } catch (err) {
+        console.error('Failed to load slide:', err);
+        alert('Failed to load slide: ' + err.message);
+      }
+    }
+
+    function loadSlideById() {
+      const slideId = document.getElementById('slideIdInput').value.trim();
+      if (slideId) {
+        loadSlide(slideId);
+      }
+    }
+
+    async function fetchSlides() {
+      try {
+        const res = await fetch(`${API_BASE}/slides`);
+        const data = await res.json();
+
+        const list = document.getElementById('slideList');
+        if (data.items.length === 0) {
+          list.innerHTML = '<li style="color: #666; font-size: 13px;">No slides found. Drop files in ./data/inbox/</li>';
+          return;
+        }
+
+        list.innerHTML = data.items.map(slide => `
+          <li class="slide-item ${currentSlideId === slide.slideId ? 'active' : ''}"
+              data-slide-id="${slide.slideId}"
+              onclick="loadSlide('${slide.slideId}')">
+            <div class="filename">${slide.slideId.substring(0, 12)}...</div>
+            <div class="meta">
+              <span class="status ${slide.status}">${slide.status}</span>
+              <span>${slide.format || 'unknown'}</span>
+              <span>${slide.width}x${slide.height}</span>
+              ${slide.onDemand ? '<span style="color: #f39c12;">on-demand</span>' : ''}
+            </div>
+          </li>
+        `).join('');
+
+      } catch (err) {
+        console.error('Failed to fetch slides:', err);
+        document.getElementById('slideList').innerHTML =
+          '<li style="color: #e74c3c; font-size: 13px;">Failed to connect to API</li>';
+      }
+    }
+
+    function startAvailabilityPolling(slideId) {
+      if (availabilityInterval) {
+        clearInterval(availabilityInterval);
+      }
+
+      const updateAvailability = async () => {
+        if (currentSlideId !== slideId) return;
+
+        try {
+          const res = await fetch(`${API_BASE}/slides/${slideId}/availability`);
+          const data = await res.json();
+
+          document.getElementById('availability').innerHTML = `
+            <div class="row">
+              <span class="label">Level Max:</span>
+              <span class="value">${data.levelMax}</span>
+            </div>
+            <div class="row">
+              <span class="label">Level Ready Max:</span>
+              <span class="value">${data.levelReadyMax}</span>
+            </div>
+            <div class="row">
+              <span class="label">Tiles on Disk:</span>
+              <span class="value">${data.tilesOnDisk}</span>
+            </div>
+            <div class="row">
+              <span class="label">On-Demand:</span>
+              <span class="value ${data.onDemand ? 'on-demand' : ''}">${data.onDemand ? 'Yes' : 'No'}</span>
+            </div>
+            ${data.onDemand ? `
+            <div class="row">
+              <span class="label">Pending:</span>
+              <span class="value">${data.pendingGenerations}</span>
+            </div>
+            ` : ''}
+          `;
+        } catch (err) {
+          console.error('Failed to fetch availability:', err);
+        }
+      };
+
+      updateAvailability();
+      availabilityInterval = setInterval(updateAvailability, 1000);
+    }
+
+    function connectSSE() {
+      if (eventSource) {
+        eventSource.close();
+      }
+
+      eventSource = new EventSource(`${API_BASE}/events`);
+
+      eventSource.onopen = () => {
+        document.getElementById('connectionStatus').className = 'connection-status connected';
+        document.getElementById('connectionStatus').textContent = 'Connected';
+      };
+
+      eventSource.onerror = () => {
+        document.getElementById('connectionStatus').className = 'connection-status disconnected';
+        document.getElementById('connectionStatus').textContent = 'Disconnected';
+        setTimeout(connectSSE, 5000);
+      };
+
+      eventSource.addEventListener('connected', (e) => {
+        addEvent('connected', 'SSE connected');
+      });
+
+      eventSource.addEventListener('slide:import', (e) => {
+        const data = JSON.parse(e.data);
+        addEvent('slide-import', `Import: ${data.filename}`);
+        fetchSlides();
+      });
+
+      eventSource.addEventListener('slide:ready', (e) => {
+        const data = JSON.parse(e.data);
+        addEvent('slide-ready', `Ready: ${data.slideId.substring(0, 8)}...`);
+        fetchSlides();
+      });
+
+      eventSource.addEventListener('tile:pending', (e) => {
+        const data = JSON.parse(e.data);
+        if (data.slideId === currentSlideId) {
+          addEvent('tile-pending', `Tile pending: ${data.z}/${data.x}/${data.y}`);
+        }
+      });
+
+      eventSource.addEventListener('tile:generated', (e) => {
+        const data = JSON.parse(e.data);
+        if (data.slideId === currentSlideId) {
+          addEvent('tile-generated', `Tile ready: ${data.z}/${data.x}/${data.y}`);
+          if (viewer && viewer.world.getItemAt(0)) {
+            viewer.world.getItemAt(0)._needsDraw = true;
+            viewer.forceRedraw();
+          }
+        }
+      });
+
+      // Annotation events
+      eventSource.addEventListener('annotation.created', (e) => {
+        const data = JSON.parse(e.data);
+        if (data.slideId === currentSlideId) {
+          addEvent('annotation-created', `Annotation created: ${data.type}`);
+          fetchAnnotations();
+        }
+      });
+
+      eventSource.addEventListener('annotation.updated', (e) => {
+        const data = JSON.parse(e.data);
+        if (data.slideId === currentSlideId) {
+          addEvent('annotation-updated', `Annotation updated: v${data.version}`);
+          fetchAnnotations();
+        }
+      });
+
+      eventSource.addEventListener('annotation.deleted', (e) => {
+        const data = JSON.parse(e.data);
+        if (data.slideId === currentSlideId) {
+          addEvent('annotation-deleted', `Annotation deleted`);
+          if (selectedAnnotationId === data.annotationId) {
+            selectedAnnotationId = null;
+          }
+          fetchAnnotations();
+        }
+      });
+    }
+
+    function addEvent(type, message) {
+      const log = document.getElementById('eventsLog');
+      const time = new Date().toLocaleTimeString();
+      const eventDiv = document.createElement('div');
+      eventDiv.className = `event ${type}`;
+      eventDiv.textContent = `[${time}] ${message}`;
+      log.insertBefore(eventDiv, log.firstChild);
+
+      while (log.children.length > maxEvents) {
+        log.removeChild(log.lastChild);
+      }
+    }
+
+    setInterval(fetchSlides, 5000);
+
+    document.getElementById('slideIdInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') {
+        loadSlideById();
+      }
+    });
+
+    // Click on overlay background to deselect
+    document.getElementById('annotationOverlay').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget || e.target.tagName === 'svg') {
+        if (currentTool === 'pan') {
+          selectedAnnotationId = null;
+          document.getElementById('deleteBtn').disabled = true;
+          renderAnnotations();
+          updateAnnotationsList();
+        }
+      }
+    });
+
+    // Initialize
+    initViewer();
+    setupDrawingHandlers();
+    fetchSlides();
+    connectSSE();
+  </script>
+</body>
+</html>

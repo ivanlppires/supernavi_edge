@@ -72,7 +72,7 @@ O pipeline local processa imagens e lâminas digitais (WSI) em tiles DeepZoom pa
 Para evitar geração duplicada de tiles:
 - Lock in-memory por tile key
 - Requisições simultâneas aguardam a primeira geração
-- Se demorar muito, retorna 202 (viewer retry)
+- Se tile está pendente, retorna 503 + Retry-After: 1 (viewer retry)
 
 ### Estrutura de saída
 
@@ -191,8 +191,131 @@ curl http://localhost:3000/v1/slides/{slideId}/tiles/15/100/80.jpg -o tile.jpg
 
 **Respostas possíveis:**
 - `200 OK` + imagem: Tile pronto
-- `202 Accepted`: Tile em geração (retry em 1s)
+- `503 Service Unavailable` + header `Retry-After: 1`: Tile em geração (retry em 1s)
 - `404 Not Found`: Tile fora dos limites
+
+## Server-Sent Events (SSE)
+
+### Endpoint
+
+```
+GET /v1/events
+```
+
+### Conexão
+
+```javascript
+const eventSource = new EventSource('http://localhost:3000/v1/events');
+
+eventSource.addEventListener('slide:import', (e) => {
+  const data = JSON.parse(e.data);
+  console.log('Slide importado:', data);
+});
+
+eventSource.addEventListener('slide:ready', (e) => {
+  const data = JSON.parse(e.data);
+  console.log('Slide pronto:', data);
+});
+```
+
+### Eventos Disponíveis
+
+| Evento | Descrição | Payload |
+|--------|-----------|---------|
+| `connected` | Conexão SSE estabelecida | `{ timestamp }` |
+| `slide:import` | Novo slide detectado no inbox | `{ slideId, filename, format, timestamp }` |
+| `slide:ready` | Processamento P0 completo | `{ slideId, width, height, maxLevel, timestamp }` |
+| `tile:pending` | Geração de tile iniciada | `{ slideId, z, x, y, timestamp }` |
+| `tile:generated` | Tile gerado com sucesso | `{ slideId, z, x, y, timestamp }` |
+
+### Exemplo de Payload
+
+**slide:import:**
+```json
+{
+  "slideId": "abc123def456...",
+  "filename": "sample.svs",
+  "format": "svs",
+  "timestamp": 1704067200000
+}
+```
+
+**slide:ready:**
+```json
+{
+  "slideId": "abc123def456...",
+  "width": 50000,
+  "height": 40000,
+  "maxLevel": 15,
+  "timestamp": 1704067201000
+}
+```
+
+**tile:pending / tile:generated:**
+```json
+{
+  "slideId": "abc123def456...",
+  "z": 10,
+  "x": 5,
+  "y": 3,
+  "timestamp": 1704067202000
+}
+```
+
+### Arquitetura SSE
+
+```
+┌─────────────┐     Redis Pub/Sub    ┌─────────────┐
+│  Processor  │─────────────────────►│    API      │
+│  (Worker)   │  supernavi:events    │  EventBus   │
+└─────────────┘                      └──────┬──────┘
+                                            │
+                                            ▼
+                                     ┌─────────────┐
+                                     │ SSE Clients │
+                                     │  /v1/events │
+                                     └─────────────┘
+```
+
+- **Processor**: Publica `slide:ready` via Redis
+- **API Watcher**: Emite `slide:import` localmente
+- **Tilegen**: Emite `tile:pending` e `tile:generated` localmente
+- **EventBus**: Centraliza eventos e distribui para clientes SSE
+
+## Viewer Test
+
+Um viewer de teste está disponível em `infra/viewer-test/index.html`.
+
+### Como usar
+
+1. Inicie os serviços:
+   ```bash
+   docker compose up -d --build
+   ```
+
+2. Abra o arquivo no navegador:
+   ```bash
+   # Ou simplesmente abra o arquivo diretamente
+   open infra/viewer-test/index.html
+
+   # Ou use um servidor HTTP local
+   npx serve infra/viewer-test -p 8080
+   ```
+
+3. O viewer irá:
+   - Listar slides disponíveis via `/v1/slides`
+   - Permitir colar um slideId manualmente
+   - Abrir o viewer OpenSeadragon consumindo `/v1/slides/{slideId}/manifest`
+   - Mostrar status/availability em tempo real (polling 1s)
+   - Exibir eventos SSE na sidebar
+
+### Funcionalidades
+
+- **Lista de slides**: Atualiza automaticamente a cada 5s
+- **Viewer OpenSeadragon**: Zoom, pan, navigator
+- **Retry automático**: Tiles com 503 são re-solicitados após 1s
+- **Availability polling**: Status do slide atualizado a cada 1s
+- **SSE events**: Log de eventos em tempo real
 
 ## Como Testar
 
@@ -263,7 +386,7 @@ done
   docker compose exec processor vipsheader /data/raw/{arquivo}.svs
   ```
 
-### Tiles retornam 202 frequentemente
+### Tiles retornam 503 frequentemente
 - Geração on-demand pode demorar para tiles grandes
 - Verifique logs da API: `docker compose logs api`
 - Considere ajustar timeout em `tilegen-svs.js`

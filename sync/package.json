@@ -1,0 +1,13 @@
+{
+  "name": "supernavi-sync",
+  "version": "0.1.0",
+  "description": "SuperNavi Sync Engine - Local to Cloud Push",
+  "type": "module",
+  "main": "src/worker.js",
+  "scripts": {
+    "start": "node src/worker.js"
+  },
+  "dependencies": {
+    "pg": "^8.11.3"
+  }
+}

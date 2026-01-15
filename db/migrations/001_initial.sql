@@ -1,6 +1,9 @@
 -- SuperNavi Local Agent - Initial Schema
 -- Migration: 001_initial
 
+-- Enable pgcrypto for gen_random_uuid()
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS slides (
     id TEXT PRIMARY KEY,
     original_filename TEXT NOT NULL,

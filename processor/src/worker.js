@@ -24,6 +24,18 @@ async function getRedis() {
   return redis;
 }
 
+/**
+ * Publish event to Redis for SSE subscribers
+ */
+async function publishEvent(event, data) {
+  try {
+    const client = await getRedis();
+    await client.publish('supernavi:events', JSON.stringify({ event, data }));
+  } catch (err) {
+    console.error('Failed to publish event:', err.message);
+  }
+}
+
 function getPool() {
   if (!pool) {
     pool = new Pool({ connectionString: databaseUrl });
@@ -138,6 +150,15 @@ async function processJob(job) {
       });
 
       await updateJob(job.jobId, { status: 'done' });
+
+      // Publish slide:ready event for SSE subscribers
+      await publishEvent('slide:ready', {
+        slideId: job.slideId,
+        width: result.width,
+        height: result.height,
+        maxLevel: result.maxLevel,
+        timestamp: Date.now()
+      });
 
       // Enqueue P1 job for remaining levels (only for image formats)
       // WSI formats generate all levels at once with vips dzsave

@@ -83,9 +83,11 @@ Características:
 ### PostgreSQL
 
 Banco de dados local contendo:
-- Catálogo de lâminas
-- Anotações e marcações
-- Histórico de sincronização
+- Catálogo de lâminas (`slides`, `jobs`)
+- Organização de casos (`cases`, `case_slides`)
+- Anotações geométricas (`annotations`)
+- Threads e mensagens (`threads`, `messages`)
+- Histórico de sincronização (`outbox_events`)
 - Configurações do usuário
 
 ### Redis
@@ -122,6 +124,50 @@ Isso permite:
 - Mesma experiência em qualquer contexto
 - Transição seamless entre modos
 - Código frontend único
+
+## Camada de Colaboração Local-First
+
+O agente implementa uma camada de colaboração completa que funciona 100% offline:
+
+### Entidades
+
+```
+Cases ──< Case_Slides >── Slides
+                            │
+                 ┌──────────┼──────────┐
+                 │          │          │
+           Annotations   Threads ── Messages
+```
+
+### Características
+
+- **Cases**: Agrupam slides em casos diagnósticos
+- **Annotations**: Marcações geométricas com versionamento otimista
+- **Threads/Messages**: Discussões ancoradas em slides ou anotações
+- **Outbox**: Toda operação é registrada para sincronização futura
+
+### SSE (Server-Sent Events)
+
+Eventos em tempo real via `/v1/events`:
+
+| Evento | Descrição |
+|--------|-----------|
+| `slide:import` | Nova lâmina detectada |
+| `slide:ready` | Processamento P0 completo |
+| `tile:pending/generated` | Tiles on-demand |
+| `case.created` | Novo caso |
+| `case.slide_linked/unlinked` | Vinculação de slides |
+| `annotation.created/updated/deleted` | Anotações |
+| `thread.created` | Novo thread |
+| `message.created` | Nova mensagem |
+
+### Documentação Detalhada
+
+Ver [COLLAB_LOCAL.md](./COLLAB_LOCAL.md) para:
+- Modelo de dados completo
+- Todos os endpoints de API
+- Exemplos de uso
+- Fluxo de sincronização futura
 
 ## Segurança
 
