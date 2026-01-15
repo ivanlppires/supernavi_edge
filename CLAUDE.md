@@ -31,7 +31,7 @@ docker compose down -v && rm -rf ./data/raw/* ./data/derived/*
 ## Project Structure
 
 ```
-supernavi2_edge/
+supernavi_edge/
 ├── api/                 # API local (Fastify) - porta 3000
 │   └── src/
 │       ├── routes/      # Endpoints HTTP

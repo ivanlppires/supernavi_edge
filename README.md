@@ -165,7 +165,7 @@ curl http://localhost:3000/v1/slides/{slideId}/availability
 ### Subir os Serviços
 ```bash
 git clone <repo>
-cd supernavi2_edge
+cd supernavi_edge
 docker compose up -d --build
 ```
 
