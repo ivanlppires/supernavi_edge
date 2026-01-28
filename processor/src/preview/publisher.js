@@ -330,6 +330,9 @@ export async function publishRemotePreview(
     const wasabiConfig = getConfig();
     const publishedAt = new Date().toISOString();
 
+    // Compute tiles prefix (ends with /)
+    const tilesPrefix = `${wasabiConfig.prefixBase}/${slideId}/tiles/`;
+
     const eventPayload = {
       slide_id: slideId,
       case_id: caseId,
@@ -339,8 +342,9 @@ export async function publishRemotePreview(
       wasabi_prefix: getSlidePrefix(slideId),
       thumb_key: `${wasabiConfig.prefixBase}/${slideId}/thumb.jpg`,
       manifest_key: `${wasabiConfig.prefixBase}/${slideId}/manifest.json`,
-      // FIXED: Use tiles/ path to match standard DZI and viewer expectation
-      tiles_prefix: `${wasabiConfig.prefixBase}/${slideId}/tiles/`,
+      // Emit both tiles_prefix (new) and low_tiles_prefix (legacy) for backwards compatibility
+      tiles_prefix: tilesPrefix,
+      low_tiles_prefix: tilesPrefix,
       max_preview_level: maxLevel,
       // REBASED dimensions for the cloud to use
       preview_width: tileStats.rebasedWidth,
@@ -360,6 +364,8 @@ export async function publishRemotePreview(
         errors: uploadStats.errors?.length || 0
       }
     };
+
+    console.log(`    tiles_prefix: ${tilesPrefix} (emitting both tiles_prefix and low_tiles_prefix)`);
 
     const outboxEvent = await recordOutboxEvent({
       entityType: 'preview',
