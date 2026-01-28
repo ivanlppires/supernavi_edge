@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { getTunnelStatus } from '../services/tunnel.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -12,11 +13,17 @@ const pkg = JSON.parse(
 
 export default async function healthRoutes(fastify) {
   fastify.get('/health', async () => {
+    const tunnel = getTunnelStatus();
     return {
       status: 'ok',
       version: pkg.version,
       mode: 'local',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      tunnel: {
+        configured: tunnel.configured,
+        connected: tunnel.connected,
+        agentId: tunnel.agentId
+      }
     };
   });
 }

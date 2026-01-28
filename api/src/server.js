@@ -8,6 +8,7 @@ import { dirname, join } from 'path';
 import { runMigrations, closePool } from './db/index.js';
 import { startWatcher } from './services/watcher.js';
 import { closeRedis } from './lib/queue.js';
+import { initTunnel, startTunnel, stopTunnel } from './services/tunnel.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -16,7 +17,9 @@ const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 
 async function buildApp() {
   const app = Fastify({
-    logger: true
+    logger: true,
+    // Increase body limit for large slide files (2GB)
+    bodyLimit: 2 * 1024 * 1024 * 1024
   });
 
   // Register core plugins
@@ -24,6 +27,22 @@ async function buildApp() {
   await app.register(cors, {
     origin: true,
     credentials: true
+  });
+
+  // Content type parser for binary uploads (SVS, TIFF, etc.)
+  // Pass through raw stream for the upload endpoint
+  app.addContentTypeParser('application/octet-stream', function (request, payload, done) {
+    done(null, payload);
+  });
+
+  // Catch-all parser for unknown content types (for slide files with exotic MIME types)
+  app.addContentTypeParser('*', function (request, payload, done) {
+    // Only pass through raw stream for upload endpoint
+    if (request.url.includes('/slides/upload')) {
+      done(null, payload);
+    } else {
+      done(null, undefined);
+    }
   });
 
   // Static files for derived content
@@ -82,9 +101,13 @@ async function start() {
   const port = process.env.PORT || 3000;
   const host = '0.0.0.0';
 
+  // Initialize tunnel with the app (for fastify.inject)
+  initTunnel(app);
+
   // Graceful shutdown
   const shutdown = async () => {
     console.log('Shutting down...');
+    stopTunnel();
     await app.close();
     await closePool();
     await closeRedis();
@@ -97,6 +120,9 @@ async function start() {
   try {
     await app.listen({ port, host });
     console.log(`SuperNavi Local Agent running on port ${port}`);
+
+    // Start tunnel connection to cloud (if configured)
+    startTunnel();
   } catch (err) {
     console.error('Failed to start server:', err);
     process.exit(1);
@@ -104,3 +130,6 @@ async function start() {
 }
 
 start();
+
+// Export buildApp for tunnel client to use fastify.inject
+export { buildApp };
