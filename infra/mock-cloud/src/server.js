@@ -110,6 +110,92 @@ app.delete('/v1/events', async () => {
   return { cleared: count };
 });
 
+// Get preview info for a slide (simulates cloud preview endpoint)
+app.get('/api/v1/slides/:slideId/preview', async (request, reply) => {
+  const { slideId } = request.params;
+
+  // Find PreviewPublished event for this slide
+  const previewEvent = receivedEvents.find(
+    e => e.entityType === 'preview' && e.payload?.slide_id === slideId
+  );
+
+  if (!previewEvent) {
+    return reply.code(404).send({
+      error: 'Preview not found',
+      slideId
+    });
+  }
+
+  const payload = previewEvent.payload;
+
+  // Generate mock signed URLs (in production, these would be real S3 presigned URLs)
+  const expiresIn = 3600; // 1 hour
+  const mockSignature = `X-Amz-Signature=mock-${Date.now()}`;
+  const baseUrl = payload.wasabi_endpoint.replace('https://', `https://${payload.wasabi_bucket}.`);
+
+  const signUrl = (key) => `${baseUrl}/${key}?${mockSignature}&X-Amz-Expires=${expiresIn}`;
+
+  return {
+    slideId,
+    caseId: payload.case_id,
+    publishedAt: payload.published_at,
+    maxPreviewLevel: payload.max_preview_level,
+    tileSize: payload.tile_size,
+    format: payload.format,
+    storage: {
+      provider: 's3',
+      bucket: payload.wasabi_bucket,
+      region: payload.wasabi_region,
+      endpoint: payload.wasabi_endpoint,
+      prefix: payload.wasabi_prefix
+    },
+    urls: {
+      thumb: signUrl(payload.thumb_key),
+      manifest: signUrl(payload.manifest_key),
+      tilesPrefix: payload.low_tiles_prefix
+    },
+    signTilesEndpoint: `/api/v1/tiles/sign`,
+    uploadStats: payload.upload_stats
+  };
+});
+
+// Sign tiles endpoint (batch sign tile URLs)
+app.post('/api/v1/tiles/sign', async (request, reply) => {
+  const { slideId, tiles } = request.body;
+
+  if (!slideId || !tiles || !Array.isArray(tiles)) {
+    return reply.code(400).send({ error: 'slideId and tiles array required' });
+  }
+
+  // Find preview event to get storage info
+  const previewEvent = receivedEvents.find(
+    e => e.entityType === 'preview' && e.payload?.slide_id === slideId
+  );
+
+  if (!previewEvent) {
+    return reply.code(404).send({ error: 'Preview not found' });
+  }
+
+  const payload = previewEvent.payload;
+  const expiresIn = 3600;
+  const mockSignature = `X-Amz-Signature=mock-${Date.now()}`;
+  const baseUrl = payload.wasabi_endpoint.replace('https://', `https://${payload.wasabi_bucket}.`);
+
+  const signedTiles = tiles.map(({ z, x, y }) => {
+    const key = `${payload.low_tiles_prefix}${z}/${x}_${y}.jpg`;
+    return {
+      z, x, y,
+      url: `${baseUrl}/${key}?${mockSignature}&X-Amz-Expires=${expiresIn}`
+    };
+  });
+
+  return {
+    slideId,
+    tiles: signedTiles,
+    expiresIn
+  };
+});
+
 // Start server
 const PORT = process.env.PORT || 4000;
 const HOST = process.env.HOST || '0.0.0.0';

@@ -3,6 +3,7 @@ import pg from 'pg';
 import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
 import { processSVS_P0, processSVS_P1 } from './pipeline-svs.js';
+import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 
 const { Pool } = pg;
 
@@ -177,6 +178,27 @@ async function processJob(job) {
       }
 
       console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
+
+      // Publish remote preview to Wasabi (async, non-blocking)
+      if (isPreviewEnabled()) {
+        try {
+          console.log(`Publishing remote preview for ${job.slideId.substring(0, 12)}...`);
+          const previewResult = await publishRemotePreview(job.slideId);
+          if (previewResult.published) {
+            console.log(`Preview published: ${previewResult.uploadStats.tilesCount} tiles, ${previewResult.uploadStats.totalBytes} bytes`);
+            await publishEvent('preview:published', {
+              slideId: job.slideId,
+              maxLevel: previewResult.maxLevel,
+              timestamp: Date.now()
+            });
+          } else if (previewResult.skipped) {
+            console.log(`Preview skipped: ${previewResult.reason}`);
+          }
+        } catch (previewErr) {
+          // Non-fatal: log and continue
+          console.error(`Preview publish failed (non-fatal): ${previewErr.message}`);
+        }
+      }
     } else if (job.type === 'P1') {
       const result = await processP1(job);
       await updateSlide(job.slideId, { level_ready_max: result.levelReadyMax });
@@ -233,6 +255,7 @@ process.on('SIGTERM', async () => {
   console.log('Shutting down worker...');
   if (redis) await redis.quit();
   if (pool) await pool.end();
+  await shutdownPreview();
   process.exit(0);
 });
 
