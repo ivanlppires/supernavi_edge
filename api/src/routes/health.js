@@ -2,6 +2,8 @@ import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getTunnelStatus } from '../services/tunnel.js';
+import { getWatcherState } from '../services/watcher.js';
+import { getConfig } from '../lib/edge-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -14,8 +16,13 @@ const pkg = JSON.parse(
 export default async function healthRoutes(fastify) {
   fastify.get('/health', async () => {
     const tunnel = getTunnelStatus();
+    const watcher = getWatcherState();
+    const config = getConfig();
+
+    const needsConfig = watcher.state === 'needs_config';
+
     return {
-      status: 'ok',
+      status: needsConfig ? 'needs_config' : 'ok',
       version: pkg.version,
       mode: 'local',
       timestamp: new Date().toISOString(),
@@ -23,6 +30,17 @@ export default async function healthRoutes(fastify) {
         configured: tunnel.configured,
         connected: tunnel.connected,
         agentId: tunnel.agentId
+      },
+      watcher: {
+        state: watcher.state,
+        error: watcher.error,
+        ingestDir: watcher.ingestDir
+      },
+      config: {
+        loaded: config.source !== 'defaults',
+        source: config.source,
+        scannerType: config.scanner?.type || 'unknown',
+        stableSeconds: config.stableSeconds
       }
     };
   });

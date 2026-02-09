@@ -6,9 +6,10 @@ import cors from '@fastify/cors';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { runMigrations, closePool } from './db/index.js';
-import { startWatcher } from './services/watcher.js';
+import { startWatcher, stopWatcher } from './services/watcher.js';
 import { closeRedis } from './lib/queue.js';
 import { initTunnel, startTunnel, stopTunnel } from './services/tunnel.js';
+import { loadConfig } from './lib/edge-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -88,6 +89,13 @@ async function start() {
     }
   }
 
+  // Load edge config
+  const { config, loaded } = await loadConfig();
+  console.log(`Edge config: source=${config.source}, loaded=${loaded}`);
+  console.log(`  scanner: ${config.scanner?.type || 'unknown'}`);
+  console.log(`  slidesDir: ${config.slidesDirContainer}`);
+  console.log(`  stableSeconds: ${config.stableSeconds}`);
+
   // Start file watcher
   console.log('Starting file watcher...');
   try {
@@ -107,6 +115,7 @@ async function start() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('Shutting down...');
+    stopWatcher();
     stopTunnel();
     await app.close();
     await closePool();

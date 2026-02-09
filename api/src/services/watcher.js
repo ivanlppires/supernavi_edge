@@ -1,20 +1,56 @@
 import { watch, createReadStream, createWriteStream } from 'fs';
-import { readdir, mkdir, stat, unlink } from 'fs/promises';
+import { readdir, mkdir, stat, unlink, access } from 'fs/promises';
 import { join, basename, extname } from 'path';
+import { constants } from 'fs';
 import { pipeline } from 'stream/promises';
 import { hashFile } from '../lib/hash.js';
 import { enqueueJob } from '../lib/queue.js';
-import { createSlide, createJob } from '../db/slides.js';
+import { createSlide, createJob, updateSlide } from '../db/slides.js';
 import { eventBus } from './events.js';
+import { parsePathologyFilename } from '../lib/filename-parser.js';
+import { loadConfig, getConfig } from '../lib/edge-config.js';
 
 // Supported formats by category
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png'];
 const WSI_EXTENSIONS = ['.svs', '.tif', '.tiff', '.ndpi', '.mrxs'];
 const SUPPORTED_EXTENSIONS = [...IMAGE_EXTENSIONS, ...WSI_EXTENSIONS];
 
-const INGEST_DIR = process.env.INGEST_DIR || '/data/inbox';
-const RAW_DIR = process.env.RAW_DIR || '/data/raw';
-const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
+// ============================================================================
+// Watcher state
+// ============================================================================
+
+let watcherState = 'stopped'; // 'running' | 'needs_config' | 'dir_inaccessible' | 'stopped'
+let watcherError = null;
+let watcherIngestDir = null;
+let dirHealthInterval = null;
+let fsWatcher = null;
+
+/**
+ * Get current watcher state.
+ * @returns {{ state: string, error: string|null, ingestDir: string|null }}
+ */
+export function getWatcherState() {
+  return { state: watcherState, error: watcherError, ingestDir: watcherIngestDir };
+}
+
+/**
+ * Stop the watcher and health check interval.
+ */
+export function stopWatcher() {
+  if (fsWatcher) {
+    fsWatcher.close();
+    fsWatcher = null;
+  }
+  if (dirHealthInterval) {
+    clearInterval(dirHealthInterval);
+    dirHealthInterval = null;
+  }
+  watcherState = 'stopped';
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 // Determine format category from extension
 function getFormat(ext) {
@@ -28,10 +64,10 @@ function getFormat(ext) {
   return 'unknown';
 }
 
-async function ensureDirectories() {
-  await mkdir(INGEST_DIR, { recursive: true });
-  await mkdir(RAW_DIR, { recursive: true });
-  await mkdir(DERIVED_DIR, { recursive: true });
+async function ensureDirectories(ingestDir, rawDir, derivedDir) {
+  await mkdir(ingestDir, { recursive: true });
+  await mkdir(rawDir, { recursive: true });
+  await mkdir(derivedDir, { recursive: true });
 }
 
 // Move file across devices (copy + delete)
@@ -43,6 +79,10 @@ async function moveFile(src, dest) {
   await unlink(src);
 }
 
+// ============================================================================
+// File processing
+// ============================================================================
+
 async function processFile(filePath) {
   const ext = extname(filePath).toLowerCase();
   if (!SUPPORTED_EXTENSIONS.includes(ext)) {
@@ -51,22 +91,26 @@ async function processFile(filePath) {
 
   const originalName = basename(filePath);
   const format = getFormat(ext);
+  const config = getConfig();
+  const stableMs = (config.stableSeconds || 15) * 1000;
+  const RAW_DIR = process.env.RAW_DIR || config.rawDirContainer || '/data/raw';
 
-  // Wait for file to be fully written (longer for large WSI files)
+  // Wait for file to be fully written
   const isWSI = WSI_EXTENSIONS.includes(ext);
-  await new Promise(r => setTimeout(r, isWSI ? 2000 : 500));
+  const initialWait = isWSI ? stableMs * 0.5 : stableMs * 0.25;
+  await new Promise(r => setTimeout(r, initialWait));
 
   try {
     // Verify file still exists and is accessible
     const fileStats = await stat(filePath);
 
-    // For large files, wait a bit more and check if size is stable
+    // For large files, wait full stableSeconds and check size stability
     if (isWSI && fileStats.size > 100 * 1024 * 1024) {
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, stableMs));
       const newStats = await stat(filePath);
       if (newStats.size !== fileStats.size) {
         console.log(`File ${originalName} still being written, will retry...`);
-        setTimeout(() => processFile(filePath), 5000);
+        setTimeout(() => processFile(filePath), stableMs);
         return;
       }
     }
@@ -89,6 +133,17 @@ async function processFile(filePath) {
       rawPath: rawPath,
       format: format
     });
+
+    // Parse filename for PathoWeb external case linkage
+    const parsed = parsePathologyFilename(originalName);
+    if (parsed) {
+      await updateSlide(slideId, {
+        externalCaseId: parsed.externalCaseId,
+        externalCaseBase: parsed.externalCaseBase,
+        externalSlideLabel: parsed.label,
+      });
+      console.log(`PathoWeb case detected: ${parsed.caseBase} label=${parsed.label} (${originalName})`);
+    }
 
     // Create job record
     const job = await createJob({
@@ -114,11 +169,11 @@ async function processFile(filePath) {
   }
 }
 
-async function scanExisting() {
+async function scanExisting(ingestDir) {
   try {
-    const files = await readdir(INGEST_DIR);
+    const files = await readdir(ingestDir);
     for (const file of files) {
-      const filePath = join(INGEST_DIR, file);
+      const filePath = join(ingestDir, file);
       await processFile(filePath);
     }
   } catch (err) {
@@ -126,23 +181,79 @@ async function scanExisting() {
   }
 }
 
+// ============================================================================
+// Directory health check
+// ============================================================================
+
+function startDirHealthCheck(dirPath) {
+  if (dirHealthInterval) clearInterval(dirHealthInterval);
+
+  dirHealthInterval = setInterval(async () => {
+    try {
+      await access(dirPath, constants.R_OK);
+      if (watcherState === 'dir_inaccessible') {
+        console.log(`[Watcher] Directory ${dirPath} is accessible again`);
+        watcherState = 'running';
+        watcherError = null;
+      }
+    } catch {
+      if (watcherState === 'running') {
+        watcherState = 'dir_inaccessible';
+        watcherError = `Directory became inaccessible: ${dirPath}`;
+        console.warn(`[Watcher] ${watcherError}`);
+      }
+    }
+  }, 30_000);
+}
+
+// ============================================================================
+// Start watcher
+// ============================================================================
+
 export async function startWatcher() {
-  await ensureDirectories();
+  const { config, loaded } = await loadConfig();
+
+  const INGEST_DIR = process.env.INGEST_DIR || config.slidesDirContainer || '/data/inbox';
+  const RAW_DIR = process.env.RAW_DIR || config.rawDirContainer || '/data/raw';
+  const DERIVED_DIR = process.env.DERIVED_DIR || config.derivedDirContainer || '/data/derived';
+
+  watcherIngestDir = INGEST_DIR;
+
+  // Check if directory exists and is accessible
+  try {
+    await access(INGEST_DIR, constants.R_OK);
+  } catch (err) {
+    watcherState = 'needs_config';
+    watcherError = `Inbox directory not accessible: ${INGEST_DIR}`;
+    console.warn(`[Watcher] ${watcherError}`);
+    console.warn('[Watcher] API will start in NEEDS_CONFIG mode. Configure via POST /v1/admin/config or run setup.js');
+    startDirHealthCheck(INGEST_DIR);
+    return null;
+  }
+
+  await ensureDirectories(INGEST_DIR, RAW_DIR, DERIVED_DIR);
 
   // Process any existing files first
-  await scanExisting();
+  await scanExisting(INGEST_DIR);
 
   // Watch for new files
+  const stableMs = (config.stableSeconds || 15) * 1000;
   console.log(`Watching ${INGEST_DIR} for new slides...`);
+  console.log(`Stable seconds: ${config.stableSeconds || 15}s`);
   console.log(`Supported formats: ${SUPPORTED_EXTENSIONS.join(', ')}`);
 
-  const watcher = watch(INGEST_DIR, async (eventType, filename) => {
+  fsWatcher = watch(INGEST_DIR, async (eventType, filename) => {
     if (eventType === 'rename' && filename) {
       const filePath = join(INGEST_DIR, filename);
-      // Small delay to ensure file is fully written
-      setTimeout(() => processFile(filePath), 1000);
+      // Initial delay proportional to stableSeconds
+      setTimeout(() => processFile(filePath), stableMs * 0.25);
     }
   });
 
-  return watcher;
+  watcherState = 'running';
+  watcherError = null;
+
+  startDirHealthCheck(INGEST_DIR);
+
+  return fsWatcher;
 }

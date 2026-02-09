@@ -18,6 +18,10 @@ services:
       DERIVED_DIR: /data/derived
       MIGRATIONS_DIR: /app/db/migrations
       CLOUD_SYNC_URL: http://mock-cloud:4000
+      # Edge Tunnel Configuration (use host.docker.internal for local testing)
+      CLOUD_TUNNEL_URL: ${CLOUD_TUNNEL_URL:-}
+      EDGE_TUNNEL_TOKEN: ${EDGE_TUNNEL_TOKEN:-}
+      EDGE_AGENT_ID: ${EDGE_AGENT_ID:-}
     depends_on:
       db:
         condition: service_healthy
@@ -30,6 +34,7 @@ services:
       - ./data/raw:/data/raw
       - ./data/derived:/data/derived
       - ./db/migrations:/app/db/migrations:ro
+      - ./config:/config
 
   # Processor - Sharp (preparado para OpenSlide)
   processor:
@@ -65,6 +70,7 @@ services:
     volumes:
       - ./data/raw:/data/raw:ro
       - ./data/derived:/data/derived
+      - ./config:/config:ro
 
   # Sync Engine - Local to Cloud Push
   sync:
@@ -75,9 +81,9 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://supernavi:supernavi@db:5432/supernavi
-      CLOUD_SYNC_URL: http://mock-cloud:4000
-      SYNC_TOKEN: dev-token
-      AGENT_ID: local-agent-001
+      CLOUD_SYNC_URL: ${CLOUD_SYNC_URL:-http://mock-cloud:4000}
+      SYNC_TOKEN: ${SYNC_TOKEN:-dev-token}
+      AGENT_ID: ${EDGE_AGENT_ID:-local-agent-001}
       LAB_ID: lab-001
       SYNC_BATCH_SIZE: 50
       SYNC_INTERVAL_MS: 5000
@@ -85,10 +91,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      mock-cloud:
-        condition: service_healthy
     networks:
       - supernavi-internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # Mock Cloud Server (for local testing)
   mock-cloud:
