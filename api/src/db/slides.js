@@ -42,9 +42,17 @@ export async function getSlide(id) {
 
 export async function listSlides() {
   const result = await query(
-    'SELECT id, status, width, height, max_level, level_ready_max, format, created_at FROM slides ORDER BY created_at DESC'
+    'SELECT id, original_filename, status, width, height, max_level, level_ready_max, format, app_mag, mpp, created_at FROM slides ORDER BY created_at DESC'
   );
   return result.rows;
+}
+
+export async function findSlideByFilename(filename) {
+  const result = await query(
+    'SELECT * FROM slides WHERE original_filename = $1 ORDER BY created_at DESC LIMIT 1',
+    [filename]
+  );
+  return result.rows[0] || null;
 }
 
 export async function createJob({ slideId, type }) {
@@ -82,4 +90,25 @@ export async function updateLevelReadyMax(id, levelReadyMax) {
     'UPDATE slides SET level_ready_max = $1 WHERE id = $2',
     [levelReadyMax, id]
   );
+}
+
+/**
+ * Delete a slide and its associated jobs
+ * @param {string} id - Slide ID
+ * @returns {Promise<{deleted: boolean, slide: object|null}>}
+ */
+export async function deleteSlide(id) {
+  // First get the slide info before deleting
+  const slide = await getSlide(id);
+  if (!slide) {
+    return { deleted: false, slide: null };
+  }
+
+  // Delete associated jobs first (foreign key constraint)
+  await query('DELETE FROM jobs WHERE slide_id = $1', [id]);
+
+  // Delete the slide
+  await query('DELETE FROM slides WHERE id = $1', [id]);
+
+  return { deleted: true, slide };
 }

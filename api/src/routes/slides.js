@@ -1,10 +1,17 @@
-import { createReadStream } from 'fs';
-import { access, readFile, readdir } from 'fs/promises';
-import { join } from 'path';
-import { listSlides, getSlide, updateLevelReadyMax } from '../db/slides.js';
+import { createReadStream, createWriteStream } from 'fs';
+import { access, readFile, readdir, mkdir, rm } from 'fs/promises';
+import { join, extname } from 'path';
+import { pipeline } from 'stream/promises';
+import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide } from '../db/slides.js';
 import { generateTile, isTilePending, getPendingCount } from '../services/tilegen-svs.js';
+import { enqueueJob } from '../lib/queue.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
+const INGEST_DIR = process.env.INGEST_DIR || '/data/inbox';
+const RAW_DIR = process.env.RAW_DIR || '/data/raw';
+
+// Supported upload formats
+const SUPPORTED_EXTENSIONS = ['.svs', '.tif', '.tiff', '.ndpi', '.mrxs', '.jpg', '.jpeg', '.png'];
 
 // WSI formats that use on-demand tile generation
 const WSI_FORMATS = ['svs', 'tiff', 'ndpi', 'mrxs'];
@@ -58,6 +65,7 @@ export default async function slidesRoutes(fastify) {
     return {
       items: slides.map(s => ({
         slideId: s.id,
+        originalFilename: s.original_filename,
         status: s.status,
         width: s.width || 0,
         height: s.height || 0,
@@ -65,9 +73,117 @@ export default async function slidesRoutes(fastify) {
         levelMax: s.max_level || 0,
         levelReadyMax: s.level_ready_max || 0,
         format: s.format || 'unknown',
-        onDemand: isWSIFormat(s.format)
+        onDemand: isWSIFormat(s.format),
+        appMag: s.app_mag || null,    // Native scan magnification
+        mpp: s.mpp || null,            // Microns per pixel
+        createdAt: s.created_at
       }))
     };
+  });
+
+  // Get slide status by filename (for tracking upload progress)
+  fastify.get('/slides/by-filename/:filename', async (request, reply) => {
+    const { filename } = request.params;
+    const slide = await findSlideByFilename(filename);
+
+    if (!slide) {
+      return {
+        found: false,
+        status: 'uploading',
+        message: 'Aguardando processamento...',
+        previewPublished: false
+      };
+    }
+
+    // Check if preview has been published (marker file exists with status 'complete')
+    let previewPublished = false;
+    try {
+      const markerPath = join(DERIVED_DIR, slide.id, 'preview_published.json');
+      const markerContent = await readFile(markerPath, 'utf8');
+      const marker = JSON.parse(markerContent);
+      previewPublished = marker.status === 'complete';
+    } catch {
+      // Marker doesn't exist or is invalid
+      previewPublished = false;
+    }
+
+    // Determine processing stage
+    let stage = 'queued';
+    let message = 'Na fila de processamento...';
+    let progress = 10;
+
+    if (slide.status === 'processing') {
+      stage = 'processing';
+      message = 'Extraindo metadados e gerando thumbnail...';
+      progress = 50;
+    } else if (slide.status === 'ready') {
+      if (previewPublished) {
+        stage = 'ready';
+        message = 'Pronto para visualização!';
+        progress = 100;
+      } else {
+        // Slide is ready but preview not yet published
+        stage = 'publishing';
+        message = 'Publicando preview remoto...';
+        progress = 80;
+      }
+    } else if (slide.status === 'failed') {
+      stage = 'failed';
+      message = 'Erro no processamento';
+      progress = 0;
+    }
+
+    return {
+      found: true,
+      slideId: slide.id,
+      originalFilename: slide.original_filename,
+      status: slide.status,
+      stage,
+      message,
+      progress,
+      width: slide.width || 0,
+      height: slide.height || 0,
+      format: slide.format,
+      previewPublished
+    };
+  });
+
+  // Upload slide to inbox (watcher will process it)
+  fastify.post('/slides/upload', async (request, reply) => {
+    // Get filename from header
+    const filename = request.headers['x-filename'];
+    if (!filename) {
+      reply.code(400);
+      return { error: 'Missing X-Filename header' };
+    }
+
+    // Validate extension
+    const ext = extname(filename).toLowerCase();
+    if (!SUPPORTED_EXTENSIONS.includes(ext)) {
+      reply.code(400);
+      return { error: `Unsupported file format: ${ext}. Supported: ${SUPPORTED_EXTENSIONS.join(', ')}` };
+    }
+
+    // Ensure inbox directory exists
+    await mkdir(INGEST_DIR, { recursive: true });
+
+    // Write file to inbox
+    const inboxPath = join(INGEST_DIR, filename);
+    try {
+      // request.body is the raw stream (from content type parser)
+      await pipeline(request.body, createWriteStream(inboxPath));
+      console.log(`Received upload: ${filename} -> ${inboxPath}`);
+
+      return {
+        success: true,
+        filename,
+        message: 'File received, processing will start shortly'
+      };
+    } catch (err) {
+      console.error(`Upload failed for ${filename}:`, err.message);
+      reply.code(500);
+      return { error: 'Failed to save uploaded file' };
+    }
   });
 
   // Get slide manifest
@@ -232,6 +348,64 @@ export default async function slidesRoutes(fastify) {
       tilesComplete,
       onDemand: isOnDemand,
       pendingGenerations: isOnDemand ? getPendingCount() : 0
+    };
+  });
+
+  // Delete a slide (local files + database + queue Wasabi cleanup)
+  fastify.delete('/slides/:slideId', async (request, reply) => {
+    const { slideId } = request.params;
+
+    // Delete from database first
+    const result = await deleteSlide(slideId);
+
+    if (!result.deleted) {
+      reply.code(404);
+      return { error: 'Slide not found' };
+    }
+
+    const slide = result.slide;
+    console.log(`Deleting slide ${slideId.substring(0, 12)} (${slide.original_filename})`);
+
+    // Delete local files (async, non-blocking)
+    const deleteLocal = async () => {
+      try {
+        // Delete derived files (tiles, manifest, thumb)
+        const derivedPath = join(DERIVED_DIR, slideId);
+        await rm(derivedPath, { recursive: true, force: true });
+        console.log(`Deleted derived files: ${derivedPath}`);
+
+        // Delete raw file if exists
+        if (slide.raw_path) {
+          await rm(slide.raw_path, { force: true });
+          console.log(`Deleted raw file: ${slide.raw_path}`);
+        }
+      } catch (err) {
+        console.error(`Error deleting local files for ${slideId}:`, err.message);
+      }
+    };
+
+    // Queue Wasabi cleanup job (async, non-blocking)
+    const queueCleanup = async () => {
+      try {
+        await enqueueJob({
+          type: 'CLEANUP',
+          slideId: slideId
+        });
+        console.log(`Queued Wasabi cleanup for ${slideId.substring(0, 12)}`);
+      } catch (err) {
+        console.error(`Error queuing cleanup for ${slideId}:`, err.message);
+      }
+    };
+
+    // Run both cleanup tasks in parallel (don't wait)
+    Promise.all([deleteLocal(), queueCleanup()]).catch(err => {
+      console.error(`Cleanup error for ${slideId}:`, err.message);
+    });
+
+    return {
+      success: true,
+      slideId,
+      message: 'Slide deleted, cleanup in progress'
     };
   });
 }

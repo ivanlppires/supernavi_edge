@@ -5,7 +5,7 @@
  * Uses AWS SDK v3 with custom endpoint configuration.
  */
 
-import { S3Client, PutObjectCommand, HeadObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, HeadObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 import { readFile, stat, readdir } from 'fs/promises';
 import { join, basename } from 'path';
 import { createHash } from 'crypto';
@@ -492,4 +492,143 @@ export function getConfig() {
     prefixBase: config.prefixBase,
     uploadConcurrency: config.uploadConcurrency
   };
+}
+
+/**
+ * List all objects for a slide preview
+ * @param {string} slideId - Slide identifier
+ * @returns {Promise<Array<{Key: string, Size: number}>>}
+ */
+export async function listSlideObjects(slideId) {
+  const client = getS3Client();
+  const prefix = `${config.prefixBase}/${slideId}/`;
+  const objects = [];
+  let continuationToken;
+
+  do {
+    const command = new ListObjectsV2Command({
+      Bucket: config.bucket,
+      Prefix: prefix,
+      ContinuationToken: continuationToken
+    });
+
+    const response = await client.send(command);
+    if (response.Contents) {
+      objects.push(...response.Contents.map(obj => ({
+        Key: obj.Key,
+        Size: obj.Size
+      })));
+    }
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
+
+  return objects;
+}
+
+/**
+ * Delete all objects for a slide preview
+ * @param {string} slideId - Slide identifier
+ * @returns {Promise<{deleted: number, errors: number}>}
+ */
+export async function deleteSlidePreview(slideId) {
+  const client = getS3Client();
+  const objects = await listSlideObjects(slideId);
+
+  if (objects.length === 0) {
+    console.log(`[WasabiUploader] No objects found for slide ${slideId}`);
+    return { deleted: 0, errors: 0 };
+  }
+
+  console.log(`[WasabiUploader] Deleting ${objects.length} objects for slide ${slideId}`);
+
+  let deleted = 0;
+  let errors = 0;
+
+  // Delete in batches of 1000 (S3 limit)
+  for (let i = 0; i < objects.length; i += 1000) {
+    const batch = objects.slice(i, i + 1000);
+    const command = new DeleteObjectsCommand({
+      Bucket: config.bucket,
+      Delete: {
+        Objects: batch.map(obj => ({ Key: obj.Key })),
+        Quiet: false
+      }
+    });
+
+    try {
+      const response = await client.send(command);
+      deleted += response.Deleted?.length || 0;
+      errors += response.Errors?.length || 0;
+
+      if (response.Errors?.length > 0) {
+        console.error(`[WasabiUploader] Delete errors:`, response.Errors);
+      }
+    } catch (err) {
+      console.error(`[WasabiUploader] Batch delete failed:`, err.message);
+      errors += batch.length;
+    }
+  }
+
+  console.log(`[WasabiUploader] Deleted ${deleted} objects, ${errors} errors`);
+  return { deleted, errors };
+}
+
+/**
+ * List all slide IDs that have previews in S3
+ * @returns {Promise<Array<string>>}
+ */
+export async function listAllPreviews() {
+  const client = getS3Client();
+  const prefix = `${config.prefixBase}/`;
+  const slideIds = new Set();
+  let continuationToken;
+
+  do {
+    const command = new ListObjectsV2Command({
+      Bucket: config.bucket,
+      Prefix: prefix,
+      Delimiter: '/',
+      ContinuationToken: continuationToken
+    });
+
+    const response = await client.send(command);
+
+    // CommonPrefixes contains the "folders" (slide IDs)
+    if (response.CommonPrefixes) {
+      for (const cp of response.CommonPrefixes) {
+        // Extract slideId from "previews/{slideId}/"
+        const match = cp.Prefix.match(/^previews\/([^/]+)\/?$/);
+        if (match && match[1]) {
+          slideIds.add(match[1]);
+        }
+      }
+    }
+    continuationToken = response.NextContinuationToken;
+  } while (continuationToken);
+
+  return Array.from(slideIds);
+}
+
+/**
+ * Delete all preview data from S3
+ * USE WITH CAUTION - this deletes ALL previews!
+ * @returns {Promise<{totalDeleted: number, totalErrors: number, slideCount: number}>}
+ */
+export async function deleteAllPreviews() {
+  console.log('[WasabiUploader] Starting full cleanup of all previews...');
+
+  const slideIds = await listAllPreviews();
+  console.log(`[WasabiUploader] Found ${slideIds.length} slides with previews`);
+
+  let totalDeleted = 0;
+  let totalErrors = 0;
+
+  for (const slideId of slideIds) {
+    const result = await deleteSlidePreview(slideId);
+    totalDeleted += result.deleted;
+    totalErrors += result.errors;
+  }
+
+  console.log(`[WasabiUploader] Cleanup complete: ${totalDeleted} objects deleted, ${totalErrors} errors`);
+  return { totalDeleted, totalErrors, slideCount: slideIds.length };
 }

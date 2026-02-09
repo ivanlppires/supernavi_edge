@@ -4,6 +4,7 @@ import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
 import { processSVS_P0, processSVS_P1 } from './pipeline-svs.js';
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
+import { deleteSlidePreview } from './preview/wasabiUploader.js';
 
 const { Pool } = pg;
 
@@ -140,7 +141,7 @@ async function processJob(job) {
       const result = await processP0(job);
 
       // Update slide with metadata
-      await updateSlide(job.slideId, {
+      const slideUpdate = {
         width: result.width,
         height: result.height,
         max_level: result.maxLevel,
@@ -148,7 +149,15 @@ async function processJob(job) {
         thumb_path: result.thumbPath,
         manifest_path: result.manifestPath,
         status: 'ready'
-      });
+      };
+      // Add magnification metadata if available
+      if (result.appMag !== undefined && result.appMag !== null) {
+        slideUpdate.app_mag = result.appMag;
+      }
+      if (result.mpp !== undefined && result.mpp !== null) {
+        slideUpdate.mpp = result.mpp;
+      }
+      await updateSlide(job.slideId, slideUpdate);
 
       await updateJob(job.jobId, { status: 'done' });
 
@@ -179,6 +188,35 @@ async function processJob(job) {
 
       console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
 
+      // Emit SlideRegistered outbox event for cloud sync
+      try {
+        const slideRow = await getPool().query(
+          'SELECT external_case_id, external_case_base, external_slide_label, original_filename FROM slides WHERE id = $1',
+          [job.slideId]
+        );
+        const slide = slideRow.rows[0];
+        if (slide) {
+          await getPool().query(
+            `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+             VALUES ($1, $2, $3, $4)`,
+            ['slide', job.slideId, 'registered', JSON.stringify({
+              slide_id: job.slideId,
+              case_id: null,
+              svs_filename: slide.original_filename,
+              width: result.width,
+              height: result.height,
+              mpp: result.mpp || 0,
+              external_case_id: slide.external_case_id || null,
+              external_case_base: slide.external_case_base || null,
+              external_slide_label: slide.external_slide_label || null,
+            })]
+          );
+          console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
+        }
+      } catch (outboxErr) {
+        console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
+      }
+
       // Publish remote preview to Wasabi (async, non-blocking)
       if (isPreviewEnabled()) {
         try {
@@ -204,6 +242,27 @@ async function processJob(job) {
       await updateSlide(job.slideId, { level_ready_max: result.levelReadyMax });
       await updateJob(job.jobId, { status: 'done' });
       console.log(`P1 complete for ${job.slideId.substring(0, 12)}, levelReadyMax=${result.levelReadyMax}`);
+    } else if (job.type === 'CLEANUP') {
+      // Delete preview from Wasabi S3
+      console.log(`Cleaning up Wasabi preview for ${job.slideId.substring(0, 12)}...`);
+      try {
+        const result = await deleteSlidePreview(job.slideId);
+        console.log(`Cleanup complete: ${result.deleted} objects deleted, ${result.errors} errors`);
+        await publishEvent('cleanup:complete', {
+          slideId: job.slideId,
+          deleted: result.deleted,
+          errors: result.errors,
+          timestamp: Date.now()
+        });
+      } catch (cleanupErr) {
+        console.error(`Cleanup failed: ${cleanupErr.message}`);
+        await publishEvent('cleanup:failed', {
+          slideId: job.slideId,
+          error: cleanupErr.message,
+          timestamp: Date.now()
+        });
+      }
+      // Note: CLEANUP jobs don't have a database job record
     }
   } catch (err) {
     console.error(`Job failed: ${err.message}`);

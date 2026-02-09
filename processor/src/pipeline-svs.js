@@ -40,7 +40,11 @@ async function getSlideProperties(rawPath) {
     const width = parseInt(props['openslide.level[0].width'] || props['width'] || '0', 10);
     const height = parseInt(props['openslide.level[0].height'] || props['height'] || '0', 10);
 
-    return { width, height, props };
+    // Extract magnification metadata (Aperio format)
+    const appMag = parseFloat(props['aperio.AppMag'] || '0') || null;
+    const mpp = parseFloat(props['aperio.MPP'] || '0') || null;
+
+    return { width, height, appMag, mpp, props };
   } catch (err) {
     console.error('openslide-show-properties failed, trying vipsheader...');
     return getSlidePropertiesVips(rawPath);
@@ -64,7 +68,7 @@ async function getSlidePropertiesVips(rawPath) {
     }
   }
 
-  return { width, height, props: {} };
+  return { width, height, appMag: null, mpp: null, props: {} };
 }
 
 /**
@@ -101,9 +105,10 @@ export async function processSVS_P0(job) {
 
   console.log(`Processing SVS P0 (edge-first): ${basename(rawPath)}`);
 
-  // Get slide dimensions
-  const { width, height } = await getSlideProperties(rawPath);
+  // Get slide dimensions and magnification metadata
+  const { width, height, appMag, mpp } = await getSlideProperties(rawPath);
   console.log(`Slide dimensions: ${width}x${height}`);
+  console.log(`Magnification: ${appMag}x, MPP: ${mpp} µm/pixel`);
 
   if (!width || !height) {
     throw new Error('Could not determine slide dimensions');
@@ -132,7 +137,10 @@ export async function processSVS_P0(job) {
     levelMax: maxLevel,
     tilePathPattern: 'tiles/{z}/{x}_{y}.jpg',
     tileUrlTemplate: `/v1/slides/${slideId}/tiles/{z}/{x}/{y}.jpg`,
-    onDemand: true  // Tiles generated on-demand
+    onDemand: true,  // Tiles generated on-demand
+    // Magnification metadata for proper zoom display
+    appMag: appMag,  // Native scan magnification (e.g., 20, 40)
+    mpp: mpp         // Microns per pixel
   };
 
   const manifestPath = join(slideDir, 'manifest.json');
@@ -148,7 +156,9 @@ export async function processSVS_P0(job) {
     p0MaxLevel: 0,        // No tiles pre-generated
     levelReadyMax: 0,     // Tiles generated on-demand
     thumbPath,
-    manifestPath
+    manifestPath,
+    appMag,               // Native scan magnification
+    mpp                   // Microns per pixel
   };
 }
 

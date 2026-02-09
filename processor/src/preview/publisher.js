@@ -94,6 +94,18 @@ async function getCaseIdForSlide(slideId) {
 }
 
 /**
+ * Get external case fields for a slide
+ */
+async function getExternalCaseFields(slideId) {
+  const pool = getPool();
+  const result = await pool.query(
+    `SELECT external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1`,
+    [slideId]
+  );
+  return result.rows[0] || {};
+}
+
+/**
  * Record event in outbox
  */
 async function recordOutboxEvent({ entityType, entityId, op, payload }) {
@@ -269,12 +281,63 @@ export async function publishRemotePreview(
   const { needsPublish, reason, marker } = await needsRepublish(slideId, maxLevel, targetMaxDim);
 
   if (!needsPublish) {
-    console.log(`[publisher] Skipping - ${reason}`);
+    console.log(`[publisher] Skipping upload - ${reason}`);
+
+    // Even when skipping upload, emit PreviewPublished event for Cloud sync
+    // This ensures Cloud can match this preview to newly created slides
+    console.log(`[publisher] Emitting PreviewPublished event for existing preview...`);
+    const wasabiConfig = getConfig();
+    const caseId = await getCaseIdForSlide(slideId);
+    const externalFields = await getExternalCaseFields(slideId);
+    const tilesPrefix = `${wasabiConfig.prefixBase}/${slideId}/tiles/`;
+
+    const eventPayload = {
+      slide_id: slideId,
+      case_id: caseId,
+      external_case_id: externalFields.external_case_id || null,
+      external_case_base: externalFields.external_case_base || null,
+      external_slide_label: externalFields.external_slide_label || null,
+      wasabi_bucket: wasabiConfig.bucket,
+      wasabi_region: wasabiConfig.region,
+      wasabi_endpoint: wasabiConfig.endpoint,
+      wasabi_prefix: getSlidePrefix(slideId),
+      thumb_key: `${wasabiConfig.prefixBase}/${slideId}/thumb.jpg`,
+      manifest_key: `${wasabiConfig.prefixBase}/${slideId}/manifest.json`,
+      tiles_prefix: tilesPrefix,
+      low_tiles_prefix: tilesPrefix,
+      max_preview_level: marker.maxLevel,
+      preview_width: marker.rebasedWidth,
+      preview_height: marker.rebasedHeight,
+      original_width: localManifest.width,
+      original_height: localManifest.height,
+      tile_size: 256,
+      format: 'jpg',
+      published_at: marker.publishedAt,
+      upload_stats: {
+        tiles_count: 0,
+        tiles_bytes: 0,
+        thumb_bytes: 0,
+        manifest_bytes: 0,
+        tiles_generated: 0,
+        errors: 0,
+        skipped: true
+      }
+    };
+
+    await recordOutboxEvent({
+      entityType: 'preview',
+      entityId: `preview:${slideId}`,
+      op: 'published',
+      payload: eventPayload
+    });
+    console.log(`[publisher] Event emitted for existing preview`);
+
     return {
       published: false,
       skipped: true,
       reason,
-      previousPublishAt: marker?.publishedAt
+      previousPublishAt: marker?.publishedAt,
+      eventEmitted: true
     };
   }
 
@@ -329,6 +392,7 @@ export async function publishRemotePreview(
     console.log(`\n  [Step 5] Emitting PreviewPublished event...`);
     const wasabiConfig = getConfig();
     const publishedAt = new Date().toISOString();
+    const externalFields = await getExternalCaseFields(slideId);
 
     // Compute tiles prefix (ends with /)
     const tilesPrefix = `${wasabiConfig.prefixBase}/${slideId}/tiles/`;
@@ -336,6 +400,9 @@ export async function publishRemotePreview(
     const eventPayload = {
       slide_id: slideId,
       case_id: caseId,
+      external_case_id: externalFields.external_case_id || null,
+      external_case_base: externalFields.external_case_base || null,
+      external_slide_label: externalFields.external_slide_label || null,
       wasabi_bucket: wasabiConfig.bucket,
       wasabi_region: wasabiConfig.region,
       wasabi_endpoint: wasabiConfig.endpoint,
