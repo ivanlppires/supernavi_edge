@@ -17,7 +17,7 @@ services:
       RAW_DIR: /data/raw
       DERIVED_DIR: /data/derived
       MIGRATIONS_DIR: /app/db/migrations
-      CLOUD_SYNC_URL: http://mock-cloud:4000
+      CLOUD_SYNC_URL: ${CLOUD_SYNC_URL:-http://mock-cloud:4000}
       # Edge Tunnel Configuration (use host.docker.internal for local testing)
       CLOUD_TUNNEL_URL: ${CLOUD_TUNNEL_URL:-}
       EDGE_TUNNEL_TOKEN: ${EDGE_TUNNEL_TOKEN:-}
