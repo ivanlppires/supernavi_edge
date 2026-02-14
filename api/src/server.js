@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { runMigrations, closePool } from './db/index.js';
 import { startWatcher, stopWatcher } from './services/watcher.js';
+import { startScanner, stopScanner } from './services/scanner-adapter.js';
 import { closeRedis } from './lib/queue.js';
 import { initTunnel, startTunnel, stopTunnel } from './services/tunnel.js';
 import { loadConfig } from './lib/edge-config.js';
@@ -104,6 +105,14 @@ async function start() {
     console.error('Failed to start watcher:', err);
   }
 
+  // Start scanner adapter (if enabled)
+  console.log('Starting scanner adapter...');
+  try {
+    await startScanner();
+  } catch (err) {
+    console.error('Failed to start scanner adapter:', err);
+  }
+
   // Build and start server
   const app = await buildApp();
   const port = process.env.PORT || 3000;
@@ -116,6 +125,7 @@ async function start() {
   const shutdown = async () => {
     console.log('Shutting down...');
     stopWatcher();
+    stopScanner();
     stopTunnel();
     await app.close();
     await closePool();

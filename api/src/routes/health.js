@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getTunnelStatus } from '../services/tunnel.js';
 import { getWatcherState } from '../services/watcher.js';
+import { getScannerState } from '../services/scanner-adapter.js';
 import { getConfig } from '../lib/edge-config.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,6 +18,7 @@ export default async function healthRoutes(fastify) {
   fastify.get('/health', async () => {
     const tunnel = getTunnelStatus();
     const watcher = getWatcherState();
+    const scanner = getScannerState();
     const config = getConfig();
 
     const needsConfig = watcher.state === 'needs_config';
@@ -35,6 +37,14 @@ export default async function healthRoutes(fastify) {
         state: watcher.state,
         error: watcher.error,
         ingestDir: watcher.ingestDir
+      },
+      scanner: {
+        enabled: scanner.enabled,
+        state: scanner.state,
+        lastScan: scanner.lastScan,
+        lastScanCount: scanner.lastScanCount,
+        totalDiscovered: scanner.totalDiscovered,
+        error: scanner.error,
       },
       config: {
         loaded: config.source !== 'defaults',
