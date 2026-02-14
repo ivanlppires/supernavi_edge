@@ -22,6 +22,9 @@ services:
       CLOUD_TUNNEL_URL: ${CLOUD_TUNNEL_URL:-}
       EDGE_TUNNEL_TOKEN: ${EDGE_TUNNEL_TOKEN:-}
       EDGE_AGENT_ID: ${EDGE_AGENT_ID:-}
+      SCANNER_ENABLED: ${SCANNER_ENABLED:-false}
+      SCANNER_DIR: /scanner
+      SCANNER_INTERVAL_MS: ${SCANNER_INTERVAL_MS:-120000}
     depends_on:
       db:
         condition: service_healthy
@@ -35,6 +38,7 @@ services:
       - ./data/derived:/data/derived
       - ./db/migrations:/app/db/migrations:ro
       - ./config:/config
+      - ${SCANNER_DIR:-./data/scanner}:/scanner:ro
 
   # Processor - Sharp (preparado para OpenSlide)
   processor:
@@ -71,6 +75,7 @@ services:
       - ./data/raw:/data/raw:ro
       - ./data/derived:/data/derived
       - ./config:/config:ro
+      - ${SCANNER_DIR:-./data/scanner}:/scanner:ro
 
   # Sync Engine - Local to Cloud Push
   sync:
