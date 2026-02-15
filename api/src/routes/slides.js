@@ -2,7 +2,9 @@ import { createReadStream, createWriteStream } from 'fs';
 import { access, readFile, readdir, mkdir, rm } from 'fs/promises';
 import { join, extname } from 'path';
 import { pipeline } from 'stream/promises';
-import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide } from '../db/slides.js';
+import { listSlides, listUnlinkedSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide } from '../db/slides.js';
+import { findCaseByExternalRef, createCase, linkSlideToCase } from '../db/collaboration.js';
+import { query } from '../db/index.js';
 import { generateTile, isTilePending, getPendingCount } from '../services/tilegen-svs.js';
 import { enqueueJob } from '../lib/queue.js';
 
@@ -78,6 +80,71 @@ export default async function slidesRoutes(fastify) {
         mpp: s.mpp || null,            // Microns per pixel
         createdAt: s.created_at
       }))
+    };
+  });
+
+  // List slides not linked to any case
+  fastify.get('/slides/unlinked', async () => {
+    const slides = await listUnlinkedSlides();
+    return {
+      slides: slides.map(s => ({
+        slideId: s.id,
+        filename: s.original_filename,
+        width: s.width || 0,
+        height: s.height || 0,
+        status: s.status,
+        createdAt: s.created_at
+      }))
+    };
+  });
+
+  // Link a slide to a case by external reference (AP number), auto-creating the case if needed
+  fastify.post('/slides/:slideId/link-to-case', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['caseBase'],
+        properties: {
+          caseBase: { type: 'string', minLength: 1 },
+          patientName: { type: 'string' }
+        }
+      }
+    }
+  }, async (request, reply) => {
+    const { slideId } = request.params;
+    const { caseBase, patientName } = request.body;
+
+    const slide = await getSlide(slideId);
+    if (!slide) {
+      reply.code(404);
+      return { error: 'Slide not found' };
+    }
+
+    const normalizedBase = caseBase.toUpperCase();
+
+    // Find or create case
+    let caseRecord = await findCaseByExternalRef(normalizedBase);
+    if (!caseRecord) {
+      const title = patientName || normalizedBase;
+      caseRecord = await createCase({ title, externalRef: normalizedBase });
+      // createCase returns a flat row, wrap slides
+      caseRecord = { ...caseRecord, slides: [] };
+    }
+
+    // Link slide to case
+    await linkSlideToCase(caseRecord.case_id, slideId);
+
+    // Update slide external fields
+    await query(
+      `UPDATE slides SET external_case_base = $1, external_case_id = $2 WHERE id = $3`,
+      [normalizedBase, `pathoweb:${normalizedBase}`, slideId]
+    );
+
+    return {
+      ok: true,
+      caseId: caseRecord.case_id,
+      slideId,
+      caseBase: normalizedBase
     };
   });
 

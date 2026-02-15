@@ -47,6 +47,17 @@ export async function listSlides() {
   return result.rows;
 }
 
+export async function listUnlinkedSlides() {
+  const result = await query(
+    `SELECT s.id, s.original_filename, s.status, s.width, s.height, s.format, s.created_at
+     FROM slides s
+     LEFT JOIN case_slides cs ON cs.slide_id = s.id
+     WHERE cs.slide_id IS NULL
+     ORDER BY s.created_at DESC`
+  );
+  return result.rows;
+}
+
 export async function findSlideByFilename(filename) {
   const result = await query(
     'SELECT * FROM slides WHERE original_filename = $1 ORDER BY created_at DESC LIMIT 1',

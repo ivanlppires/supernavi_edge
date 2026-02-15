@@ -8,7 +8,8 @@ import {
   getCase,
   listCases,
   linkSlideToCase,
-  unlinkSlideFromCase
+  unlinkSlideFromCase,
+  findCaseByExternalRef
 } from '../db/collaboration.js';
 import { getSlide } from '../db/slides.js';
 import { eventBus } from '../services/events.js';
@@ -61,6 +62,34 @@ export default async function casesRoutes(fastify) {
         slideCount: parseInt(c.slide_count, 10),
         createdAt: c.created_at,
         updatedAt: c.updated_at
+      }))
+    };
+  });
+
+  // Get a case by external reference (AP number)
+  fastify.get('/cases/by-ref/:caseBase', async (request, reply) => {
+    const { caseBase } = request.params;
+
+    const caseRecord = await findCaseByExternalRef(caseBase.toUpperCase());
+    if (!caseRecord) {
+      reply.code(404);
+      return { error: 'Case not found' };
+    }
+
+    return {
+      caseId: caseRecord.case_id,
+      title: caseRecord.title,
+      caseBase: caseRecord.external_ref,
+      createdAt: caseRecord.created_at,
+      updatedAt: caseRecord.updated_at,
+      slides: caseRecord.slides.map(s => ({
+        slideId: s.id,
+        filename: s.original_filename,
+        status: s.status,
+        width: s.width,
+        height: s.height,
+        format: s.format,
+        linkedAt: s.linked_at
       }))
     };
   });

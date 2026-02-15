@@ -77,6 +77,32 @@ export async function createCase({ title, externalRef = null }) {
 }
 
 /**
+ * Find a case by external_ref (e.g. AP number) with linked slides
+ */
+export async function findCaseByExternalRef(externalRef) {
+  const caseResult = await query(
+    'SELECT * FROM cases WHERE external_ref = $1',
+    [externalRef]
+  );
+  if (caseResult.rows.length === 0) return null;
+
+  const caseRow = caseResult.rows[0];
+  const slidesResult = await query(
+    `SELECT s.id, s.original_filename, s.status, s.width, s.height, s.format, cs.linked_at
+     FROM case_slides cs
+     JOIN slides s ON s.id = cs.slide_id
+     WHERE cs.case_id = $1
+     ORDER BY cs.linked_at ASC`,
+    [caseRow.case_id]
+  );
+
+  return {
+    ...caseRow,
+    slides: slidesResult.rows
+  };
+}
+
+/**
  * Get a case by ID with linked slides
  */
 export async function getCase(caseId) {
