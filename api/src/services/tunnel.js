@@ -17,11 +17,17 @@ const INITIAL_RECONNECT_DELAY = 1000; // 1 second
 const MAX_RECONNECT_DELAY = 30000; // 30 seconds
 const RECONNECT_MULTIPLIER = 2;
 
+// Client-side keepalive (detects half-open connections after cloud redeploy)
+const PING_INTERVAL_MS = 25000; // 25 seconds
+const PONG_TIMEOUT_MS = 10000; // 10 seconds to receive pong
+
 // State
 let ws = null;
 let fastifyApp = null;
 let reconnectDelay = INITIAL_RECONNECT_DELAY;
 let reconnectTimer = null;
+let pingTimer = null;
+let pongTimeoutTimer = null;
 let isShuttingDown = false;
 
 /**
@@ -83,6 +89,8 @@ function connect() {
       console.log(`[Tunnel] Connected to cloud as ${EDGE_AGENT_ID}`);
       // Reset reconnect delay on successful connection
       reconnectDelay = INITIAL_RECONNECT_DELAY;
+      // Start client-side keepalive pings
+      startPingInterval();
     });
 
     ws.on('message', async (data) => {
@@ -102,6 +110,7 @@ function connect() {
     ws.on('close', (code, reason) => {
       console.log(`[Tunnel] Disconnected (code: ${code}, reason: ${reason?.toString() || 'none'})`);
       ws = null;
+      stopPingInterval();
       scheduleReconnect();
     });
 
@@ -111,7 +120,11 @@ function connect() {
     });
 
     ws.on('pong', () => {
-      // Keep-alive pong received
+      // Keep-alive pong received — connection is alive
+      if (pongTimeoutTimer) {
+        clearTimeout(pongTimeoutTimer);
+        pongTimeoutTimer = null;
+      }
     });
   } catch (err) {
     console.error('[Tunnel] Failed to connect:', err);
@@ -217,11 +230,35 @@ function sendMessage(message) {
 }
 
 /**
+ * Start client-side ping interval to detect half-open connections.
+ * If pong is not received within PONG_TIMEOUT_MS, the connection is
+ * considered dead and is terminated to trigger reconnection.
+ */
+function startPingInterval() {
+  stopPingInterval();
+  pingTimer = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.ping();
+    pongTimeoutTimer = setTimeout(() => {
+      console.warn('[Tunnel] Pong timeout — connection appears dead, terminating');
+      if (ws) ws.terminate();
+    }, PONG_TIMEOUT_MS);
+  }, PING_INTERVAL_MS);
+}
+
+function stopPingInterval() {
+  if (pingTimer) { clearInterval(pingTimer); pingTimer = null; }
+  if (pongTimeoutTimer) { clearTimeout(pongTimeoutTimer); pongTimeoutTimer = null; }
+}
+
+/**
  * Stop the tunnel connection
  */
 export function stopTunnel() {
   console.log('[Tunnel] Stopping...');
   isShuttingDown = true;
+
+  stopPingInterval();
 
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
