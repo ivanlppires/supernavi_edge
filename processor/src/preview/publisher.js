@@ -357,6 +357,13 @@ export async function publishRemotePreview(
     console.log(`    Generated: ${tileStats.generated} tiles`);
     console.log(`    Rebased dimensions: ${tileStats.rebasedWidth}x${tileStats.rebasedHeight}`);
 
+    // Use the actual maxLevel from tile generation (may be capped at natural level count)
+    const effectiveMaxLevel = tileStats.maxLevel ?? maxLevel;
+    if (effectiveMaxLevel !== maxLevel) {
+      console.log(`    maxLevel capped: ${maxLevel} -> ${effectiveMaxLevel}`);
+      maxLevel = effectiveMaxLevel;
+    }
+
     // Step 2: Upload thumb
     console.log(`\n  [Step 2] Uploading thumb.jpg...`);
     const thumbResult = await uploadThumb(thumbPath, slideId);

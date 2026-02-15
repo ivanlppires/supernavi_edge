@@ -54,3 +54,6 @@ temp/
 # Edge config (machine-specific)
 docker-compose.override.yml
 config/edge-config.json
+
+# Installation scripts (contain credentials)
+scripts/install-*.ps1

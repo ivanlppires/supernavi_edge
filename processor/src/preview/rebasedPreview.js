@@ -80,6 +80,12 @@ async function findRawPath(slideId) {
  */
 export function calculateRebasedDimensions(originalWidth, originalHeight, targetMaxDim = DEFAULT_TARGET_MAX_DIM) {
   const maxDim = Math.max(originalWidth, originalHeight);
+
+  // Never upscale: if targetMaxDim >= original, use original dimensions
+  if (targetMaxDim >= maxDim) {
+    return { width: originalWidth, height: originalHeight, scale: 1 };
+  }
+
   const scale = maxDim / targetMaxDim;
 
   return {
@@ -271,6 +277,13 @@ export async function generateRebasedPreviewTiles(
   console.log(`  Original: ${originalWidth}x${originalHeight}`);
   console.log(`  Rebased: ${rebased.width}x${rebased.height} (scale=${rebased.scale.toFixed(3)})`);
 
+  // Cap maxLevel at the natural level count for the image
+  const naturalMaxLevel = Math.ceil(Math.log2(Math.max(rebased.width, rebased.height)));
+  if (maxLevel > naturalMaxLevel) {
+    console.log(`  Capping maxLevel from ${maxLevel} to ${naturalMaxLevel} (natural for ${rebased.width}x${rebased.height})`);
+    maxLevel = naturalMaxLevel;
+  }
+
   // Calculate expected tiles
   const totalTiles = countRebasedTiles(rebased.width, rebased.height, maxLevel);
   console.log(`  Total tiles expected for levels 0..${maxLevel}: ${totalTiles}`);
@@ -281,14 +294,21 @@ export async function generateRebasedPreviewTiles(
   const basePath = join(slideDir, 'preview_base.jpg');
   const previewTilesDir = join(slideDir, 'preview_tiles');
 
-  // Step 1: Generate rebased base image
-  console.log(`  Generating rebased base image...`);
-  await generateRebasedBase(rawPath, basePath, rebased.width, rebased.height);
-  console.log(`    Base image created: ${rebased.width}x${rebased.height}`);
+  // Step 1: Generate rebased base image (skip if no downscaling needed)
+  let dzsavePath;
+  if (rebased.scale <= 1) {
+    console.log(`  No downscaling needed - using original file directly for dzsave`);
+    dzsavePath = rawPath;
+  } else {
+    console.log(`  Generating rebased base image...`);
+    await generateRebasedBase(rawPath, basePath, rebased.width, rebased.height);
+    console.log(`    Base image created: ${rebased.width}x${rebased.height}`);
+    dzsavePath = basePath;
+  }
 
-  // Step 2: Generate DZI tiles from base
+  // Step 2: Generate DZI tiles from base (or original)
   console.log(`  Generating DZI tiles...`);
-  const dziDir = await generateDziFromBase(basePath, slideDir, maxLevel);
+  const dziDir = await generateDziFromBase(dzsavePath, slideDir, maxLevel);
 
   // Step 3: Reorganize tiles to our structure
   console.log(`  Reorganizing tiles...`);
@@ -324,6 +344,7 @@ export async function generateRebasedPreviewTiles(
     rebasedWidth: rebased.width,
     rebasedHeight: rebased.height,
     scale: rebased.scale,
+    maxLevel,
     totalTiles,
     byLevel,
     generated,
