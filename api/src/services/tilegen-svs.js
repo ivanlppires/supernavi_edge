@@ -32,10 +32,32 @@ const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILE_SIZE = 256;
 const TILE_QUALITY = 90;
 const GENERATION_TIMEOUT_MS = 30000; // 30 seconds max for tile generation
+const MAX_CONCURRENT_GENERATIONS = parseInt(process.env.TILE_CONCURRENCY || '4', 10);
 
 // In-memory lock map for request coalescing
 // Key: "slideId/z/x/y" -> Promise that resolves when tile is ready
 const pendingTiles = new Map();
+
+// Simple semaphore for limiting concurrent vips processes
+let activeGenerations = 0;
+const generationQueue = [];
+
+function acquireSemaphore() {
+  if (activeGenerations < MAX_CONCURRENT_GENERATIONS) {
+    activeGenerations++;
+    return Promise.resolve();
+  }
+  return new Promise(resolve => generationQueue.push(resolve));
+}
+
+function releaseSemaphore() {
+  activeGenerations--;
+  if (generationQueue.length > 0) {
+    activeGenerations++;
+    const next = generationQueue.shift();
+    next();
+  }
+}
 
 // Cache for SVS pyramid level info
 // Key: rawPath -> { levels: [{ width, height, downsample }] }
@@ -379,9 +401,15 @@ export async function generateTile(slideId, z, x, y) {
   // Emit tile pending event
   eventBus.emitTilePending(slideId, z, x, y);
 
-  // Start new generation
+  // Start new generation (with concurrency limit)
   const generationPromise = (async () => {
+    await acquireSemaphore();
     try {
+      // Re-check if tile was generated while waiting in queue
+      if (await tileExists(tilePath)) {
+        return { exists: true, path: tilePath };
+      }
+
       const rawPath = await getRawPath(slideId);
       const manifest = await getSlideInfo(slideId);
 
@@ -394,6 +422,7 @@ export async function generateTile(slideId, z, x, y) {
 
       return result;
     } finally {
+      releaseSemaphore();
       // Clean up lock after generation completes (success or failure)
       pendingTiles.delete(tileKey);
     }
