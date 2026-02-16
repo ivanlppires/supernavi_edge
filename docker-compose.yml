@@ -64,6 +64,8 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      # Tile pre-generation: max DeepZoom level to pre-generate (0 = disabled)
+      PREGENERATE_MAX_LEVEL: ${PREGENERATE_MAX_LEVEL:-8}
     depends_on:
       db:
         condition: service_healthy

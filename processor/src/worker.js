@@ -2,7 +2,7 @@ import { createClient } from 'redis';
 import pg from 'pg';
 import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
-import { processSVS_P0, processSVS_P1 } from './pipeline-svs.js';
+import { processSVS_P0, processSVS_P1, pregenerateLowLevelTiles } from './pipeline-svs.js';
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 import { deleteSlidePreview } from './preview/wasabiUploader.js';
 
@@ -10,6 +10,7 @@ const { Pool } = pg;
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const databaseUrl = process.env.DATABASE_URL || 'postgres://supernavi:supernavi@localhost:5432/supernavi';
+const PREGENERATE_MAX_LEVEL = parseInt(process.env.PREGENERATE_MAX_LEVEL || '8', 10);
 
 let redis = null;
 let pool = null;
@@ -217,6 +218,28 @@ async function processJob(job) {
         console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
       }
 
+      // Pre-generate low-level tiles for WSI formats (after slide is ready)
+      if (isWSIFormat(format) && PREGENERATE_MAX_LEVEL > 0) {
+        try {
+          const pregenResult = await pregenerateLowLevelTiles(
+            job.slideId, job.rawPath,
+            result.width, result.height, result.maxLevel,
+            PREGENERATE_MAX_LEVEL
+          );
+          await updateSlide(job.slideId, { level_ready_max: pregenResult.levelReadyMax });
+          await publishEvent('tiles:pregenerated', {
+            slideId: job.slideId,
+            levelReadyMax: pregenResult.levelReadyMax,
+            tileCount: pregenResult.tileCount,
+            elapsed: pregenResult.elapsed,
+            timestamp: Date.now()
+          });
+        } catch (pregenErr) {
+          // Non-fatal: on-demand tiles still work
+          console.error(`Tile pre-generation failed (non-fatal): ${pregenErr.message}`);
+        }
+      }
+
       // Publish remote preview to Wasabi (async, non-blocking)
       if (isPreviewEnabled()) {
         try {
@@ -275,6 +298,7 @@ async function processJob(job) {
 async function worker() {
   console.log('SuperNavi Processor Worker starting...');
   console.log(`WSI formats (OpenSlide): ${WSI_FORMATS.join(', ')}`);
+  console.log(`Tile pre-generation: levels 0-${PREGENERATE_MAX_LEVEL} (PREGENERATE_MAX_LEVEL=${PREGENERATE_MAX_LEVEL})`);
 
   // Wait for Redis
   let retries = 10;

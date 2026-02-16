@@ -2,12 +2,13 @@
  * SVS/WSI Pipeline - Edge-First Architecture
  *
  * P0: Quick metadata extraction + thumbnail (instant viewer access)
- * Tiles: Generated on-demand by API (not batch processed)
+ * Post-P0: Pre-generate low-level tiles (0-N) for fast initial viewing
+ * High-zoom tiles: Generated on-demand by API
  */
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { mkdir, writeFile } from 'fs/promises';
+import { mkdir, writeFile, unlink, access } from 'fs/promises';
 import { join, basename } from 'path';
 
 const execAsync = promisify(exec);
@@ -163,6 +164,100 @@ export async function processSVS_P0(job) {
     appMag,               // Native scan magnification
     mpp                   // Microns per pixel
   };
+}
+
+/**
+ * Pre-generate low-level tiles for faster initial viewing.
+ *
+ * Called AFTER the slide is already marked "ready" (viewer can open immediately).
+ * Generates tiles for levels 0 through maxPregenLevel using vips thumbnail + crop.
+ *
+ * For each level:
+ *   1. Create a thumbnail of the whole image at the level's pixel dimensions
+ *   2. Split into 256x256 tiles (most low levels fit in a single tile)
+ *   3. Save to tiles/{z}/{x}_{y}.jpg (same path as on-demand tiles)
+ */
+export async function pregenerateLowLevelTiles(slideId, rawPath, width, height, maxLevel, maxPregenLevel) {
+  const effectiveMax = Math.min(maxPregenLevel, maxLevel);
+  const startTime = Date.now();
+  let tileCount = 0;
+  const tilesDir = join(DERIVED_DIR, slideId, 'tiles');
+
+  console.log(`[Pregen] Starting tile pre-generation for levels 0-${effectiveMax}...`);
+
+  for (let z = 0; z <= effectiveMax; z++) {
+    const scale = Math.pow(2, maxLevel - z);
+    const levelWidth = Math.max(1, Math.ceil(width / scale));
+    const levelHeight = Math.max(1, Math.ceil(height / scale));
+
+    const tilesX = Math.ceil(levelWidth / TILE_SIZE);
+    const tilesY = Math.ceil(levelHeight / TILE_SIZE);
+
+    const levelDir = join(tilesDir, String(z));
+    await mkdir(levelDir, { recursive: true });
+
+    // For single-tile levels (most low levels), generate directly as the tile
+    if (tilesX === 1 && tilesY === 1) {
+      const tilePath = join(levelDir, '0_0.jpg');
+      // Skip if already exists (idempotent)
+      if (await fileExists(tilePath)) {
+        tileCount++;
+        continue;
+      }
+      await execAsync(
+        `vips thumbnail "${rawPath}" "${tilePath}[Q=90]" ${levelWidth} --height ${levelHeight} --size force`,
+        { timeout: 30000 }
+      );
+      tileCount++;
+      continue;
+    }
+
+    // Multi-tile level: create full level image, then crop into tiles
+    const levelTempPath = join(tilesDir, `_level_${z}_temp.jpg`);
+    try {
+      await execAsync(
+        `vips thumbnail "${rawPath}" "${levelTempPath}[Q=95]" ${levelWidth} --height ${levelHeight} --size force`,
+        { timeout: 60000 }
+      );
+
+      for (let x = 0; x < tilesX; x++) {
+        for (let y = 0; y < tilesY; y++) {
+          const tilePath = join(levelDir, `${x}_${y}.jpg`);
+          if (await fileExists(tilePath)) {
+            tileCount++;
+            continue;
+          }
+
+          const cropX = x * TILE_SIZE;
+          const cropY = y * TILE_SIZE;
+          const cropW = Math.min(TILE_SIZE, levelWidth - cropX);
+          const cropH = Math.min(TILE_SIZE, levelHeight - cropY);
+
+          await execAsync(
+            `vips crop "${levelTempPath}" "${tilePath}[Q=90]" ${cropX} ${cropY} ${cropW} ${cropH}`,
+            { timeout: 10000 }
+          );
+          tileCount++;
+        }
+      }
+    } finally {
+      await unlink(levelTempPath).catch(() => {});
+    }
+  }
+
+  const elapsed = Date.now() - startTime;
+  console.log(`[Pregen] Complete: ${tileCount} tiles (levels 0-${effectiveMax}) in ${elapsed}ms`);
+
+  return { tileCount, elapsed, levelReadyMax: effectiveMax };
+}
+
+async function fileExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
