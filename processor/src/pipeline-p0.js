@@ -81,12 +81,12 @@ export async function processP0(job) {
   const maxLevel = calculateMaxLevel(width, height);
   const p0MaxLevel = Math.min(P0_MAX_LEVEL, maxLevel);
 
-  // Generate thumbnail
+  // Generate thumbnail (640x400, 16:10 centre crop to match dashboard cards)
   const thumbPath = join(slideDir, 'thumb.jpg');
   await image
     .clone()
-    .resize(256, 256, { fit: 'inside' })
-    .jpeg({ quality: 80 })
+    .resize(640, 400, { fit: 'cover', position: 'centre' })
+    .jpeg({ quality: 85 })
     .toFile(thumbPath);
 
   console.log(`Generated thumbnail: ${thumbPath}`);
