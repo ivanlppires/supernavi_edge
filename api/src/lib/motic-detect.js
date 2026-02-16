@@ -19,11 +19,12 @@ const CANDIDATES = [
   { path: '/motic',                 scannerType: 'motic', model: null, score: 85,  os: 'linux' },
 
   // MOTIC - Windows
-  { path: 'C:\\Motic\\Scans',       scannerType: 'motic', model: null, score: 100, os: 'windows' },
-  { path: 'C:\\Motic\\SlideScanner', scannerType: 'motic', model: null, score: 95,  os: 'windows' },
-  { path: 'D:\\Motic\\Scans',       scannerType: 'motic', model: null, score: 90,  os: 'windows' },
-  { path: 'C:\\MoticImageExport',   scannerType: 'motic', model: null, score: 85,  os: 'windows' },
-  { path: 'C:\\ProgramData\\Motic', scannerType: 'motic', model: null, score: 80,  os: 'windows' },
+  { path: 'C:\\Slides',             scannerType: 'motic', model: null, score: 100, os: 'windows' },
+  { path: 'C:\\Motic\\Scans',       scannerType: 'motic', model: null, score: 90,  os: 'windows' },
+  { path: 'C:\\Motic\\SlideScanner', scannerType: 'motic', model: null, score: 85,  os: 'windows' },
+  { path: 'D:\\Motic\\Scans',       scannerType: 'motic', model: null, score: 80,  os: 'windows' },
+  { path: 'C:\\MoticImageExport',   scannerType: 'motic', model: null, score: 75,  os: 'windows' },
+  { path: 'C:\\ProgramData\\Motic', scannerType: 'motic', model: null, score: 70,  os: 'windows' },
 
   // Hamamatsu
   { path: 'C:\\NDP.view2\\Images',  scannerType: 'hamamatsu', model: null, score: 80, os: 'windows' },
