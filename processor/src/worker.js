@@ -2,7 +2,7 @@ import { createClient } from 'redis';
 import pg from 'pg';
 import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
-import { processSVS_P0, processSVS_P1, pregenerateLowLevelTiles } from './pipeline-svs.js';
+import { processSVS_P0, processSVS_P1, generateFullTilePyramid } from './pipeline-svs.js';
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 import { deleteSlidePreview } from './preview/wasabiUploader.js';
 
@@ -10,7 +10,6 @@ const { Pool } = pg;
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const databaseUrl = process.env.DATABASE_URL || 'postgres://supernavi:supernavi@localhost:5432/supernavi';
-const PREGENERATE_MAX_LEVEL = parseInt(process.env.PREGENERATE_MAX_LEVEL || '8', 10);
 
 let redis = null;
 let pool = null;
@@ -218,25 +217,22 @@ async function processJob(job) {
         console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
       }
 
-      // Pre-generate low-level tiles for WSI formats (after slide is ready)
-      if (isWSIFormat(format) && PREGENERATE_MAX_LEVEL > 0) {
+      // Enqueue TILEGEN job for full tile pyramid generation
+      if (isWSIFormat(format)) {
         try {
-          const pregenResult = await pregenerateLowLevelTiles(
-            job.slideId, job.rawPath,
-            result.width, result.height, result.maxLevel,
-            PREGENERATE_MAX_LEVEL
-          );
-          await updateSlide(job.slideId, { level_ready_max: pregenResult.levelReadyMax });
-          await publishEvent('tiles:pregenerated', {
+          const tilegenJobId = await createJob(job.slideId, 'TILEGEN');
+          await updateSlide(job.slideId, { tilegen_status: 'queued' });
+          await enqueueJob({
+            jobId: tilegenJobId,
             slideId: job.slideId,
-            levelReadyMax: pregenResult.levelReadyMax,
-            tileCount: pregenResult.tileCount,
-            elapsed: pregenResult.elapsed,
-            timestamp: Date.now()
+            type: 'TILEGEN',
+            rawPath: job.rawPath,
+            format: format,
+            maxLevel: result.maxLevel
           });
-        } catch (pregenErr) {
-          // Non-fatal: on-demand tiles still work
-          console.error(`Tile pre-generation failed (non-fatal): ${pregenErr.message}`);
+          console.log(`Enqueued TILEGEN job for ${job.slideId.substring(0, 12)}`);
+        } catch (tilegenErr) {
+          console.error(`Failed to enqueue TILEGEN (non-fatal): ${tilegenErr.message}`);
         }
       }
 
@@ -286,6 +282,33 @@ async function processJob(job) {
         });
       }
       // Note: CLEANUP jobs don't have a database job record
+    } else if (job.type === 'TILEGEN') {
+      // Full tile pyramid generation using vips dzsave
+      await updateSlide(job.slideId, { tilegen_status: 'running' });
+      await updateJob(job.jobId, { status: 'running' });
+
+      try {
+        const result = await generateFullTilePyramid(job.slideId, job.rawPath);
+
+        await updateSlide(job.slideId, {
+          tilegen_status: 'done',
+          level_ready_max: job.maxLevel
+        });
+        await updateJob(job.jobId, { status: 'done' });
+
+        await publishEvent('tiles:ready', {
+          slideId: job.slideId,
+          tileCount: result.tileCount,
+          elapsed: result.elapsed,
+          timestamp: Date.now()
+        });
+
+        console.log(`TILEGEN complete for ${job.slideId.substring(0, 12)}: ${result.tileCount} tiles in ${result.elapsed}ms`);
+      } catch (tilegenErr) {
+        console.error(`TILEGEN failed for ${job.slideId.substring(0, 12)}: ${tilegenErr.message}`);
+        await updateSlide(job.slideId, { tilegen_status: 'failed' });
+        await updateJob(job.jobId, { status: 'failed', error: tilegenErr.message });
+      }
     }
   } catch (err) {
     console.error(`Job failed: ${err.message}`);
@@ -298,7 +321,7 @@ async function processJob(job) {
 async function worker() {
   console.log('SuperNavi Processor Worker starting...');
   console.log(`WSI formats (OpenSlide): ${WSI_FORMATS.join(', ')}`);
-  console.log(`Tile pre-generation: levels 0-${PREGENERATE_MAX_LEVEL} (PREGENERATE_MAX_LEVEL=${PREGENERATE_MAX_LEVEL})`);
+  console.log(`Tile generation: full pyramid via vips dzsave (TILEGEN job)`);
 
   // Wait for Redis
   let retries = 10;
