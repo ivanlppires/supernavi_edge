@@ -57,3 +57,6 @@ config/edge-config.json
 
 # Installation scripts (contain credentials)
 scripts/install-*.ps1
+
+# TLS certificates (generated locally via mkcert)
+caddy/certs/*.pem

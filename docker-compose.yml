@@ -40,6 +40,21 @@ services:
       - ./config:/config
       - ${SCANNER_DIR:-./data/scanner}:/scanner:ro
 
+  # HTTPS Reverse Proxy for direct LAN access
+  caddy:
+    image: caddy:2-alpine
+    container_name: supernavi-caddy
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:3443:3443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/certs:/certs:ro
+    networks:
+      - supernavi-internal
+    depends_on:
+      - api
+
   # Processor - Sharp (preparado para OpenSlide)
   processor:
     build:
