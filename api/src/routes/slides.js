@@ -5,7 +5,7 @@ import { pipeline } from 'stream/promises';
 import { listSlides, listUnlinkedSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide } from '../db/slides.js';
 import { findCaseByExternalRef, createCase, linkSlideToCase } from '../db/collaboration.js';
 import { query } from '../db/index.js';
-import { generateTile, isTilePending, getPendingCount } from '../services/tilegen-svs.js';
+import { generateTile, getPendingCount } from '../services/tilegen-svs.js';
 import { enqueueJob } from '../lib/queue.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
@@ -301,13 +301,6 @@ export default async function slidesRoutes(fastify) {
       // Tile doesn't exist - check if WSI format for on-demand generation
     }
 
-    // Check if tile is already being generated (return 503 immediately)
-    if (isTilePending(slideId, z, x, y)) {
-      reply.code(503);
-      reply.header('Retry-After', '1');
-      return reply.send();
-    }
-
     // Get slide info to check format
     const slide = await getSlide(slideId);
     if (!slide) {
@@ -331,13 +324,6 @@ export default async function slidesRoutes(fastify) {
         return createReadStream(result.path);
       }
     } catch (err) {
-      // Check if generation is still pending (concurrent request started it)
-      if (isTilePending(slideId, z, x, y)) {
-        reply.code(503);
-        reply.header('Retry-After', '1');
-        return reply.send();
-      }
-
       console.error(`Tile generation failed: ${slideId}/${z}/${x}/${y}`, err.message);
       reply.code(404);
       return reply.send();
