@@ -31,7 +31,7 @@ async function cleanupTemp(path) {
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILE_SIZE = 256;
 const TILE_QUALITY = 90;
-const GENERATION_TIMEOUT_MS = 30000; // 30 seconds max for tile generation
+const GENERATION_TIMEOUT_MS = parseInt(process.env.TILE_GENERATION_TIMEOUT_MS || '60000', 10);
 const MAX_CONCURRENT_GENERATIONS = parseInt(process.env.TILE_CONCURRENCY || '4', 10);
 
 // In-memory lock map for request coalescing
