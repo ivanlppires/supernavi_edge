@@ -2,13 +2,13 @@
  * SVS/WSI Pipeline - Edge-First Architecture
  *
  * P0: Quick metadata extraction + thumbnail (instant viewer access)
- * Post-P0: Pre-generate low-level tiles (0-N) for fast initial viewing
- * High-zoom tiles: Generated on-demand by API
+ * Post-P0: Full tile pyramid generation via vips dzsave (TILEGEN job)
+ * Fallback: On-demand tile generation during TILEGEN window
  */
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { mkdir, writeFile, unlink, access } from 'fs/promises';
+import { mkdir, writeFile, unlink, access, readdir, rename, rm } from 'fs/promises';
 import { join, basename } from 'path';
 
 const execAsync = promisify(exec);
@@ -166,89 +166,69 @@ export async function processSVS_P0(job) {
   };
 }
 
+const TILEGEN_TIMEOUT_MS = parseInt(process.env.TILEGEN_TIMEOUT_MS || '600000', 10);
+
 /**
- * Pre-generate low-level tiles for faster initial viewing.
+ * Generate full DeepZoom tile pyramid using vips dzsave.
  *
- * Called AFTER the slide is already marked "ready" (viewer can open immediately).
- * Generates tiles for levels 0 through maxPregenLevel using vips thumbnail + crop.
+ * Reads the SVS file once and generates ALL tiles in a single optimized pass.
+ * For a typical 10000x12000 slide this takes 30-120s total.
  *
- * For each level:
- *   1. Create a thumbnail of the whole image at the level's pixel dimensions
- *   2. Split into 256x256 tiles (most low levels fit in a single tile)
- *   3. Save to tiles/{z}/{x}_{y}.jpg (same path as on-demand tiles)
+ * Atomic directory swap to avoid races with on-demand generation:
+ * 1. dzsave writes to .dzsave_tmp/dz → creates .dzsave_tmp/dz_files/{z}/{x}_{y}.jpg
+ * 2. If tiles/ doesn't exist: rename dz_files → tiles (atomic)
+ * 3. If tiles/ exists (on-demand created some): swap atomically
+ * 4. Cleanup temp artifacts
  */
-export async function pregenerateLowLevelTiles(slideId, rawPath, width, height, maxLevel, maxPregenLevel) {
-  const effectiveMax = Math.min(maxPregenLevel, maxLevel);
+export async function generateFullTilePyramid(slideId, rawPath) {
+  const slideDir = join(DERIVED_DIR, slideId);
+  const tilesDir = join(slideDir, 'tiles');
+  const tmpDir = join(slideDir, '.dzsave_tmp');
+  const tmpOutput = join(tmpDir, 'dz');
+  const dzsaveOutput = join(tmpDir, 'dz_files');
   const startTime = Date.now();
-  let tileCount = 0;
-  const tilesDir = join(DERIVED_DIR, slideId, 'tiles');
 
-  console.log(`[Pregen] Starting tile pre-generation for levels 0-${effectiveMax}...`);
+  console.log(`[TILEGEN] Starting vips dzsave for ${slideId.substring(0, 12)}...`);
 
-  for (let z = 0; z <= effectiveMax; z++) {
-    const scale = Math.pow(2, maxLevel - z);
-    const levelWidth = Math.max(1, Math.ceil(width / scale));
-    const levelHeight = Math.max(1, Math.ceil(height / scale));
+  await rm(tmpDir, { recursive: true, force: true });
+  await mkdir(tmpDir, { recursive: true });
 
-    const tilesX = Math.ceil(levelWidth / TILE_SIZE);
-    const tilesY = Math.ceil(levelHeight / TILE_SIZE);
+  try {
+    const cmd = `vips dzsave "${rawPath}" "${tmpOutput}" --suffix .jpg[Q=90] --tile-size ${TILE_SIZE} --overlap ${TILE_OVERLAP}`;
+    await execAsync(cmd, { timeout: TILEGEN_TIMEOUT_MS });
 
-    const levelDir = join(tilesDir, String(z));
-    await mkdir(levelDir, { recursive: true });
-
-    // For single-tile levels (most low levels), generate directly as the tile
-    if (tilesX === 1 && tilesY === 1) {
-      const tilePath = join(levelDir, '0_0.jpg');
-      // Skip if already exists (idempotent)
-      if (await fileExists(tilePath)) {
-        tileCount++;
-        continue;
+    // Count generated tiles
+    let tileCount = 0;
+    const levelDirs = await readdir(dzsaveOutput);
+    for (const dir of levelDirs) {
+      if (/^\d+$/.test(dir)) {
+        const files = await readdir(join(dzsaveOutput, dir));
+        tileCount += files.filter(f => f.endsWith('.jpg')).length;
       }
-      await execAsync(
-        `vips thumbnail "${rawPath}" "${tilePath}[Q=90]" ${levelWidth} --height ${levelHeight} --size force`,
-        { timeout: 30000 }
-      );
-      tileCount++;
-      continue;
     }
 
-    // Multi-tile level: create full level image, then crop into tiles
-    const levelTempPath = join(tilesDir, `_level_${z}_temp.jpg`);
-    try {
-      await execAsync(
-        `vips thumbnail "${rawPath}" "${levelTempPath}[Q=95]" ${levelWidth} --height ${levelHeight} --size force`,
-        { timeout: 60000 }
-      );
-
-      for (let x = 0; x < tilesX; x++) {
-        for (let y = 0; y < tilesY; y++) {
-          const tilePath = join(levelDir, `${x}_${y}.jpg`);
-          if (await fileExists(tilePath)) {
-            tileCount++;
-            continue;
-          }
-
-          const cropX = x * TILE_SIZE;
-          const cropY = y * TILE_SIZE;
-          const cropW = Math.min(TILE_SIZE, levelWidth - cropX);
-          const cropH = Math.min(TILE_SIZE, levelHeight - cropY);
-
-          await execAsync(
-            `vips crop "${levelTempPath}" "${tilePath}[Q=90]" ${cropX} ${cropY} ${cropW} ${cropH}`,
-            { timeout: 10000 }
-          );
-          tileCount++;
-        }
-      }
-    } finally {
-      await unlink(levelTempPath).catch(() => {});
+    // Atomic swap into tiles/
+    const tilesExist = await fileExists(tilesDir);
+    if (tilesExist) {
+      const oldTilesDir = join(slideDir, '.tiles_old');
+      await rm(oldTilesDir, { recursive: true, force: true });
+      await rename(tilesDir, oldTilesDir);
+      await rename(dzsaveOutput, tilesDir);
+      await rm(oldTilesDir, { recursive: true, force: true });
+    } else {
+      await rename(dzsaveOutput, tilesDir);
     }
+
+    await rm(tmpDir, { recursive: true, force: true });
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[TILEGEN] Complete: ${tileCount} tiles in ${elapsed}ms`);
+
+    return { tileCount, elapsed };
+  } catch (err) {
+    await rm(tmpDir, { recursive: true, force: true });
+    throw err;
   }
-
-  const elapsed = Date.now() - startTime;
-  console.log(`[Pregen] Complete: ${tileCount} tiles (levels 0-${effectiveMax}) in ${elapsed}ms`);
-
-  return { tileCount, elapsed, levelReadyMax: effectiveMax };
 }
 
 async function fileExists(path) {
