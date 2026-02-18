@@ -149,7 +149,10 @@ async function processJob(job) {
   }
 
   await updateJob(job.jobId, { status: 'running' });
-  await updateSlide(job.slideId, { status: 'ingesting' });
+  // Only P0 sets status to ingesting — TILEGEN/PREVIEW must not overwrite slide status
+  if (job.type === 'P0') {
+    await updateSlide(job.slideId, { status: 'ingesting' });
+  }
 
   try {
     if (job.type === 'P0') {
