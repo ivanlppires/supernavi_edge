@@ -61,7 +61,7 @@ Write-Host "  Arquivos limpos." -ForegroundColor Green
 Write-Host "[7/8] Limpando cloud ($CloudUrl)..." -ForegroundColor Yellow
 try {
   $headers = @{ "x-supernavi-key" = $CloudApiKey }
-  $response = Invoke-RestMethod -Uri "$CloudUrl/api/admin/dev-reset" -Method POST -ContentType "application/json" -Headers $headers
+  $response = Invoke-RestMethod -Uri "$CloudUrl/api/admin/dev-reset" -Method POST -ContentType "application/json" -Body "{}" -Headers $headers
   if ($response.ok) {
     Write-Host "  Cloud limpo: slides=$($response.deleted.slides_read) previews=$($response.deleted.preview_assets) events=$($response.deleted.events_slide)" -ForegroundColor Green
   }
