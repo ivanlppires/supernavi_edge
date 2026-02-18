@@ -149,127 +149,111 @@ async function processJob(job) {
   }
 
   await updateJob(job.jobId, { status: 'running' });
-  await updateSlide(job.slideId, { status: 'processing' });
+  await updateSlide(job.slideId, { status: 'ingesting' });
 
   try {
     if (job.type === 'P0') {
       const result = await processP0(job);
 
-      // Update slide with metadata
-      const slideUpdate = {
-        width: result.width,
-        height: result.height,
-        max_level: result.maxLevel,
-        level_ready_max: result.levelReadyMax,
-        thumb_path: result.thumbPath,
-        manifest_path: result.manifestPath,
-        status: 'ready'
-      };
-      // Add magnification metadata if available
-      if (result.appMag !== undefined && result.appMag !== null) {
-        slideUpdate.app_mag = result.appMag;
-      }
-      if (result.mpp !== undefined && result.mpp !== null) {
-        slideUpdate.mpp = result.mpp;
-      }
-      await updateSlide(job.slideId, slideUpdate);
+      if (isWSIFormat(format)) {
+        // WSI flow: P0 → tilegen → TILEGEN job → PREVIEW job
+        const slideUpdate = {
+          width: result.width,
+          height: result.height,
+          max_level: result.maxLevel,
+          level_ready_max: 0,
+          thumb_path: result.thumbPath,
+          manifest_path: result.manifestPath,
+          status: 'tilegen',
+          tilegen_status: 'queued'
+        };
+        if (result.appMag != null) slideUpdate.app_mag = result.appMag;
+        if (result.mpp != null) slideUpdate.mpp = result.mpp;
+        await updateSlide(job.slideId, slideUpdate);
+        await updateJob(job.jobId, { status: 'done' });
 
-      await updateJob(job.jobId, { status: 'done' });
+        console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
 
-      // Publish slide:ready event for SSE subscribers
-      await publishEvent('slide:ready', {
-        slideId: job.slideId,
-        width: result.width,
-        height: result.height,
-        maxLevel: result.maxLevel,
-        timestamp: Date.now()
-      });
+        // Emit SlideRegistered outbox event
+        try {
+          const slideRow = await getPool().query(
+            'SELECT external_case_id, external_case_base, external_slide_label, original_filename FROM slides WHERE id = $1',
+            [job.slideId]
+          );
+          const slide = slideRow.rows[0];
+          if (slide) {
+            await getPool().query(
+              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+               VALUES ($1, $2, $3, $4)`,
+              ['slide', job.slideId, 'registered', JSON.stringify({
+                slide_id: job.slideId,
+                case_id: null,
+                svs_filename: slide.original_filename,
+                width: result.width,
+                height: result.height,
+                mpp: result.mpp || 0,
+                external_case_id: slide.external_case_id || null,
+                external_case_base: slide.external_case_base || null,
+                external_slide_label: slide.external_slide_label || null,
+              })]
+            );
+            console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
+          }
+        } catch (outboxErr) {
+          console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
+        }
 
-      // Enqueue P1 job for remaining levels (only for image formats)
-      // WSI formats generate all levels at once with vips dzsave
-      if (!isWSIFormat(format) && result.maxLevel > result.p0MaxLevel) {
-        const p1JobId = await createJob(job.slideId, 'P1');
+        // Enqueue TILEGEN job (NO publishRemotePreview here)
+        const tilegenJobId = await createJob(job.slideId, 'TILEGEN');
         await enqueueJob({
-          jobId: p1JobId,
+          jobId: tilegenJobId,
           slideId: job.slideId,
-          type: 'P1',
+          type: 'TILEGEN',
           rawPath: job.rawPath,
           format: format,
-          startLevel: result.p0MaxLevel + 1,
           maxLevel: result.maxLevel
         });
-        console.log(`Enqueued P1 job for levels ${result.p0MaxLevel + 1}-${result.maxLevel}`);
-      }
+        console.log(`Enqueued TILEGEN job for ${job.slideId.substring(0, 12)}`);
 
-      console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
+      } else {
+        // Image flow (JPG/PNG): P0 → ready immediately
+        const slideUpdate = {
+          width: result.width,
+          height: result.height,
+          max_level: result.maxLevel,
+          level_ready_max: result.levelReadyMax,
+          thumb_path: result.thumbPath,
+          manifest_path: result.manifestPath,
+          status: 'ready'
+        };
+        if (result.appMag != null) slideUpdate.app_mag = result.appMag;
+        if (result.mpp != null) slideUpdate.mpp = result.mpp;
+        await updateSlide(job.slideId, slideUpdate);
+        await updateJob(job.jobId, { status: 'done' });
 
-      // Emit SlideRegistered outbox event for cloud sync
-      try {
-        const slideRow = await getPool().query(
-          'SELECT external_case_id, external_case_base, external_slide_label, original_filename FROM slides WHERE id = $1',
-          [job.slideId]
-        );
-        const slide = slideRow.rows[0];
-        if (slide) {
-          await getPool().query(
-            `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-             VALUES ($1, $2, $3, $4)`,
-            ['slide', job.slideId, 'registered', JSON.stringify({
-              slide_id: job.slideId,
-              case_id: null,
-              svs_filename: slide.original_filename,
-              width: result.width,
-              height: result.height,
-              mpp: result.mpp || 0,
-              external_case_id: slide.external_case_id || null,
-              external_case_base: slide.external_case_base || null,
-              external_slide_label: slide.external_slide_label || null,
-            })]
-          );
-          console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
-        }
-      } catch (outboxErr) {
-        console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
-      }
+        await publishEvent('slide:ready', {
+          slideId: job.slideId,
+          width: result.width,
+          height: result.height,
+          maxLevel: result.maxLevel,
+          timestamp: Date.now()
+        });
 
-      // Enqueue TILEGEN job for full tile pyramid generation
-      if (isWSIFormat(format)) {
-        try {
-          const tilegenJobId = await createJob(job.slideId, 'TILEGEN');
-          await updateSlide(job.slideId, { tilegen_status: 'queued' });
+        if (result.maxLevel > result.p0MaxLevel) {
+          const p1JobId = await createJob(job.slideId, 'P1');
           await enqueueJob({
-            jobId: tilegenJobId,
+            jobId: p1JobId,
             slideId: job.slideId,
-            type: 'TILEGEN',
+            type: 'P1',
             rawPath: job.rawPath,
             format: format,
+            startLevel: result.p0MaxLevel + 1,
             maxLevel: result.maxLevel
           });
-          console.log(`Enqueued TILEGEN job for ${job.slideId.substring(0, 12)}`);
-        } catch (tilegenErr) {
-          console.error(`Failed to enqueue TILEGEN (non-fatal): ${tilegenErr.message}`);
+          console.log(`Enqueued P1 job for levels ${result.p0MaxLevel + 1}-${result.maxLevel}`);
         }
-      }
 
-      // Publish remote preview to Wasabi (async, non-blocking)
-      if (isPreviewEnabled()) {
-        try {
-          console.log(`Publishing remote preview for ${job.slideId.substring(0, 12)}...`);
-          const previewResult = await publishRemotePreview(job.slideId);
-          if (previewResult.published) {
-            console.log(`Preview published: ${previewResult.uploadStats.tilesCount} tiles, ${previewResult.uploadStats.totalBytes} bytes`);
-            await publishEvent('preview:published', {
-              slideId: job.slideId,
-              maxLevel: previewResult.maxLevel,
-              timestamp: Date.now()
-            });
-          } else if (previewResult.skipped) {
-            console.log(`Preview skipped: ${previewResult.reason}`);
-          }
-        } catch (previewErr) {
-          // Non-fatal: log and continue
-          console.error(`Preview publish failed (non-fatal): ${previewErr.message}`);
-        }
+        console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
       }
     } else if (job.type === 'P1') {
       const result = await processP1(job);
@@ -298,20 +282,22 @@ async function processJob(job) {
       }
       // Note: CLEANUP jobs don't have a database job record
     } else if (job.type === 'TILEGEN') {
-      // Full tile pyramid generation using vips dzsave
       await updateSlide(job.slideId, { tilegen_status: 'running' });
       await updateJob(job.jobId, { status: 'running' });
 
       try {
         const result = await generateFullTilePyramid(job.slideId, job.rawPath);
 
+        // TILEGEN success → slide is now ready
         await updateSlide(job.slideId, {
           tilegen_status: 'done',
+          status: 'ready',
           level_ready_max: job.maxLevel
         });
         await updateJob(job.jobId, { status: 'done' });
 
-        await publishEvent('tiles:ready', {
+        // Emit slide:ready SSE event (first time slide becomes openable)
+        await publishEvent('slide:ready', {
           slideId: job.slideId,
           tileCount: result.tileCount,
           elapsed: result.elapsed,
@@ -319,10 +305,52 @@ async function processJob(job) {
         });
 
         console.log(`TILEGEN complete for ${job.slideId.substring(0, 12)}: ${result.tileCount} tiles in ${result.elapsed}ms`);
+
+        // Enqueue PREVIEW job (runs after tilegen, never alters slide status)
+        if (isPreviewEnabled()) {
+          try {
+            const previewJobId = await createJob(job.slideId, 'PREVIEW');
+            await enqueueJob({
+              jobId: previewJobId,
+              slideId: job.slideId,
+              type: 'PREVIEW',
+              rawPath: job.rawPath,
+              format: format
+            });
+            console.log(`Enqueued PREVIEW job for ${job.slideId.substring(0, 12)}`);
+          } catch (previewErr) {
+            console.error(`Failed to enqueue PREVIEW (non-fatal): ${previewErr.message}`);
+          }
+        }
+
       } catch (tilegenErr) {
         console.error(`TILEGEN failed for ${job.slideId.substring(0, 12)}: ${tilegenErr.message}`);
-        await updateSlide(job.slideId, { tilegen_status: 'failed' });
+        await updateSlide(job.slideId, { tilegen_status: 'failed', status: 'failed' });
         await updateJob(job.jobId, { status: 'failed', error: tilegenErr.message });
+      }
+    } else if (job.type === 'PREVIEW') {
+      // Remote preview publishing — runs AFTER tilegen, NEVER alters slide status
+      await updateJob(job.jobId, { status: 'running' });
+
+      try {
+        console.log(`Publishing remote preview for ${job.slideId.substring(0, 12)}...`);
+        const previewResult = await publishRemotePreview(job.slideId);
+        await updateJob(job.jobId, { status: 'done' });
+
+        if (previewResult.published) {
+          console.log(`Preview published: ${previewResult.uploadStats.tilesCount} tiles, ${previewResult.uploadStats.totalBytes} bytes`);
+          await publishEvent('preview:published', {
+            slideId: job.slideId,
+            maxLevel: previewResult.maxLevel,
+            timestamp: Date.now()
+          });
+        } else if (previewResult.skipped) {
+          console.log(`Preview skipped: ${previewResult.reason}`);
+        }
+      } catch (previewErr) {
+        console.error(`Preview publish failed (non-fatal): ${previewErr.message}`);
+        await updateJob(job.jobId, { status: 'failed', error: previewErr.message });
+        // NOTE: Do NOT update slide status — preview failure is non-fatal
       }
     }
   } catch (err) {
