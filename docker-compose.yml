@@ -33,7 +33,7 @@ services:
     networks:
       - supernavi-internal
     volumes:
-      - C:/Slides:/data/inbox
+      - ./data/inbox:/data/inbox
       - ./data/raw:/data/raw
       - ./data/derived:/data/derived
       - ./db/migrations:/app/db/migrations:ro
