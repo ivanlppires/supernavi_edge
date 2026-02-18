@@ -30,25 +30,27 @@ Write-Host ""
 # 3. Start only DB and Redis
 Write-Host "[3/8] Subindo DB e Redis..." -ForegroundColor Yellow
 docker compose up -d db redis
-Start-Sleep -Seconds 3
+Write-Host "  Aguardando DB ficar pronto..."
+$attempts = 0
+do {
+  Start-Sleep -Seconds 2
+  $attempts++
+  $healthy = docker compose exec -T db pg_isready -U supernavi 2>$null
+} while ($LASTEXITCODE -ne 0 -and $attempts -lt 15)
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "  ERRO: DB nao ficou pronto" -ForegroundColor Red
+  exit 1
+}
+Write-Host "  DB pronto." -ForegroundColor Green
 
 # 4. Wipe edge database
 Write-Host "[4/8] Limpando banco de dados (edge)..." -ForegroundColor Yellow
-docker compose exec db psql -U supernavi -c @"
-DELETE FROM outbox_events;
-DELETE FROM scanner_files;
-DELETE FROM messages;
-DELETE FROM threads;
-DELETE FROM annotations;
-DELETE FROM case_slides;
-DELETE FROM jobs;
-DELETE FROM slides;
-"@
+docker compose exec -T db psql -U supernavi -c "DELETE FROM outbox_events; DELETE FROM scanner_files; DELETE FROM messages; DELETE FROM threads; DELETE FROM annotations; DELETE FROM case_slides; DELETE FROM jobs; DELETE FROM slides;"
 Write-Host "  Edge DB limpo." -ForegroundColor Green
 
 # 5. Flush Redis
 Write-Host "[5/8] Limpando Redis..." -ForegroundColor Yellow
-docker compose exec redis redis-cli FLUSHDB
+docker compose exec -T redis redis-cli FLUSHDB
 Write-Host "  Redis limpo." -ForegroundColor Green
 
 # 6. Clean data directories
@@ -67,8 +69,8 @@ try {
   }
 } catch {
   $status = $_.Exception.Response.StatusCode.value__
-  if ($status -eq 403) {
-    Write-Host "  Cloud: dev-reset desabilitado (production mode)" -ForegroundColor Yellow
+  if ($status -eq 401) {
+    Write-Host "  Cloud: API key invalida" -ForegroundColor Red
   } else {
     Write-Host "  Cloud: nao foi possivel limpar ($($_.Exception.Message))" -ForegroundColor Yellow
     Write-Host "  (limpe manualmente se necessario)" -ForegroundColor Yellow
