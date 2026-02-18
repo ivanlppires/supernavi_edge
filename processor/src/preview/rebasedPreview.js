@@ -13,10 +13,12 @@
 
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { mkdir, access, readFile, readdir, unlink, rm } from 'fs/promises';
+import { mkdir, access, readFile, readdir, unlink, rm, stat } from 'fs/promises';
 import { join, dirname } from 'path';
+import pg from 'pg';
 
 const execAsync = promisify(exec);
+const { Pool } = pg;
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const RAW_DIR = process.env.RAW_DIR || '/data/raw';
@@ -57,15 +59,34 @@ async function loadManifest(slideId) {
 }
 
 /**
- * Get raw file path for a slide
+ * Get raw file path for a slide.
+ * Checks RAW_DIR first, falls back to raw_path from DB (scanner adapter case).
  */
 async function findRawPath(slideId) {
-  const files = await readdir(RAW_DIR);
-  for (const file of files) {
-    if (file.startsWith(slideId)) {
-      return join(RAW_DIR, file);
+  // Try RAW_DIR first (watcher flow: /data/raw/{slideId}_{filename})
+  try {
+    const files = await readdir(RAW_DIR);
+    for (const file of files) {
+      if (file.startsWith(slideId)) {
+        return join(RAW_DIR, file);
+      }
     }
+  } catch { /* RAW_DIR may not exist */ }
+
+  // Fallback: query DB for raw_path (scanner adapter stores /scanner/... path)
+  const dbUrl = process.env.DATABASE_URL || 'postgres://supernavi:supernavi@db:5432/supernavi';
+  const pool = new Pool({ connectionString: dbUrl, max: 1 });
+  try {
+    const result = await pool.query('SELECT raw_path FROM slides WHERE id = $1', [slideId]);
+    if (result.rows.length > 0 && result.rows[0].raw_path) {
+      const dbPath = result.rows[0].raw_path;
+      await stat(dbPath); // verify file exists
+      return dbPath;
+    }
+  } finally {
+    await pool.end();
   }
+
   throw new Error(`Raw file not found for slide: ${slideId}`);
 }
 
