@@ -7,7 +7,8 @@
 ##############################################################################
 
 param(
-  [string]$CloudUrl = "https://cloud.supernavi.app"
+  [string]$CloudUrl = "https://cloud.supernavi.app",
+  [string]$CloudApiKey = "snavi-dev-bridge-key-2026"
 )
 
 $ErrorActionPreference = "Stop"
@@ -59,7 +60,8 @@ Write-Host "  Arquivos limpos." -ForegroundColor Green
 # 7. Wipe cloud data
 Write-Host "[7/8] Limpando cloud ($CloudUrl)..." -ForegroundColor Yellow
 try {
-  $response = Invoke-RestMethod -Uri "$CloudUrl/api/admin/dev-reset" -Method POST -ContentType "application/json"
+  $headers = @{ "x-supernavi-key" = $CloudApiKey }
+  $response = Invoke-RestMethod -Uri "$CloudUrl/api/admin/dev-reset" -Method POST -ContentType "application/json" -Headers $headers
   if ($response.ok) {
     Write-Host "  Cloud limpo: slides=$($response.deleted.slides_read) previews=$($response.deleted.preview_assets) events=$($response.deleted.events_slide)" -ForegroundColor Green
   }
