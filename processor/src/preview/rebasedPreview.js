@@ -181,18 +181,17 @@ async function generateRebasedBase(rawPath, basePath, rebasedWidth, rebasedHeigh
  * @param {number} maxLevel - Max level to generate
  */
 async function generateDziFromBase(basePath, outputDir, maxLevel) {
-  const tilesDir = join(outputDir, 'preview_tiles');
+  const tmpDir = join(outputDir, 'preview_tmp');
 
-  // Clean up any existing preview tiles
-  await cleanup(tilesDir);
-  await mkdir(tilesDir, { recursive: true });
+  // Clean up any existing temp dir
+  await cleanup(tmpDir);
+  await mkdir(tmpDir, { recursive: true });
 
-  // Use vips dzsave to generate DZI pyramid
-  // depth=onetile means generate only the levels needed, not all the way down
-  const cmd = `vips dzsave "${basePath}" "${tilesDir}/pyramid" --suffix .jpg[Q=${TILE_QUALITY}] --tile-size ${TILE_SIZE} --overlap 0`;
+  // Use vips dzsave to generate DZI pyramid into preview_tmp/
+  const cmd = `vips dzsave "${basePath}" "${tmpDir}/pyramid" --suffix .jpg[Q=${TILE_QUALITY}] --tile-size ${TILE_SIZE} --overlap 0`;
   await execAsync(cmd, { timeout: GENERATION_TIMEOUT_MS });
 
-  return tilesDir;
+  return tmpDir;
 }
 
 /**
@@ -327,13 +326,15 @@ export async function generateRebasedPreviewTiles(
     dzsavePath = basePath;
   }
 
-  // Step 2: Generate DZI tiles from base (or original)
+  // Step 2: Generate DZI tiles into preview_tmp/
   console.log(`  Generating DZI tiles...`);
-  const dziDir = await generateDziFromBase(dzsavePath, slideDir, maxLevel);
+  const tmpDir = await generateDziFromBase(dzsavePath, slideDir, maxLevel);
 
-  // Step 3: Reorganize tiles to our structure
+  // Step 3: Reorganize tiles from preview_tmp/ to preview_tiles/
   console.log(`  Reorganizing tiles...`);
-  const actualMaxLevel = await reorganizeDziTiles(dziDir, previewTilesDir, maxLevel);
+  await cleanup(previewTilesDir);
+  await mkdir(previewTilesDir, { recursive: true });
+  const actualMaxLevel = await reorganizeDziTiles(tmpDir, previewTilesDir, maxLevel);
   console.log(`    Actual max level from DZI: ${actualMaxLevel}`);
 
   // Step 4: Count generated tiles per level
@@ -354,9 +355,7 @@ export async function generateRebasedPreviewTiles(
 
   // Clean up temp files
   await cleanup(basePath);
-  await cleanup(join(slideDir, 'pyramid.dzi'));
-  await cleanup(join(dziDir, 'pyramid_files'));
-  await cleanup(join(dziDir, 'pyramid.dzi'));
+  await cleanup(tmpDir);
 
   const elapsed = Date.now() - startTime;
   console.log(`[generateRebasedPreviewTiles] complete: generated=${generated} expected=${totalTiles} elapsed=${elapsed}ms`);
