@@ -6,7 +6,7 @@
  * Fallback: On-demand tile generation during TILEGEN window
  */
 
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { mkdir, writeFile, unlink, access, readdir, rename, rm } from 'fs/promises';
 import { join, basename } from 'path';
@@ -125,10 +125,6 @@ export async function processSVS_P0(job) {
   const thumbPath = join(slideDir, 'thumb.jpg');
   await generateThumbnail(rawPath, thumbPath);
 
-  // Create tiles directory (tiles generated on-demand)
-  const tilesDir = join(slideDir, 'tiles');
-  await mkdir(tilesDir, { recursive: true });
-
   // Generate manifest immediately (viewer can start)
   const manifest = {
     protocol: 'dzi',
@@ -166,38 +162,126 @@ export async function processSVS_P0(job) {
   };
 }
 
-const TILEGEN_TIMEOUT_MS = parseInt(process.env.TILEGEN_TIMEOUT_MS || '600000', 10);
+const TILEGEN_TIMEOUT_MS = parseInt(process.env.TILEGEN_TIMEOUT_MS || '3600000', 10);
+
+/**
+ * Run vips dzsave via spawn (streaming stdout/stderr, no maxBuffer limit).
+ * Returns a promise that resolves when the process exits with code 0.
+ */
+function spawnDzsave(rawPath, outputPath, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      'dzsave', rawPath, outputPath,
+      '--suffix', '.jpg[Q=90]',
+      '--tile-size', String(TILE_SIZE),
+      '--overlap', String(TILE_OVERLAP)
+    ];
+
+    const proc = spawn('vips', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+
+    proc.stdout.on('data', (chunk) => {
+      const msg = chunk.toString().trim();
+      if (msg) console.log(`[TILEGEN/vips] ${msg}`);
+    });
+
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+      const msg = chunk.toString().trim();
+      if (msg) console.warn(`[TILEGEN/vips] ${msg}`);
+    });
+
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error(`TILEGEN timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+      } else {
+        reject(new Error(`vips dzsave exited with code ${code}: ${stderr.slice(0, 500)}`));
+      }
+    });
+
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+async function fileExists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Robust directory swap with ENOTEMPTY retry.
+ *
+ * 1. If tilesDir exists → rename to oldDir
+ * 2. rename srcDir → tilesDir
+ * 3. rm -rf oldDir
+ *
+ * On ENOTEMPTY: rm -rf tilesDir, then retry rename.
+ */
+export async function robustSwapDirs(srcDir, tilesDir, oldDir) {
+  await rm(oldDir, { recursive: true, force: true });
+
+  const tilesExist = await fileExists(tilesDir);
+  if (tilesExist) {
+    await rename(tilesDir, oldDir);
+  }
+
+  try {
+    await rename(srcDir, tilesDir);
+  } catch (err) {
+    if (err.code === 'ENOTEMPTY' || err.code === 'EEXIST') {
+      console.warn(`[TILEGEN] rename failed (${err.code}), retrying with rm + rename...`);
+      await rm(tilesDir, { recursive: true, force: true });
+      await rename(srcDir, tilesDir);
+    } else {
+      throw err;
+    }
+  }
+
+  await rm(oldDir, { recursive: true, force: true });
+}
 
 /**
  * Generate full DeepZoom tile pyramid using vips dzsave.
  *
- * Reads the SVS file once and generates ALL tiles in a single optimized pass.
- * For a typical 10000x12000 slide this takes 30-120s total.
- *
- * Atomic directory swap to avoid races with on-demand generation:
- * 1. dzsave writes to .dzsave_tmp/dz → creates .dzsave_tmp/dz_files/{z}/{x}_{y}.jpg
- * 2. If tiles/ doesn't exist: rename dz_files → tiles (atomic)
- * 3. If tiles/ exists (on-demand created some): swap atomically
- * 4. Cleanup temp artifacts
+ * Uses spawn (streaming, no maxBuffer limit).
+ * Uses tilegen_tmp/ for working directory (segregated from preview_tmp/).
+ * Robust atomic swap to avoid ENOTEMPTY errors.
  */
 export async function generateFullTilePyramid(slideId, rawPath) {
   const slideDir = join(DERIVED_DIR, slideId);
   const tilesDir = join(slideDir, 'tiles');
-  const tmpDir = join(slideDir, '.dzsave_tmp');
+  const tmpDir = join(slideDir, 'tilegen_tmp');
   const tmpOutput = join(tmpDir, 'dz');
   const dzsaveOutput = join(tmpDir, 'dz_files');
+  const oldTilesDir = join(slideDir, 'tiles_old');
   const startTime = Date.now();
 
   console.log(`[TILEGEN] Starting vips dzsave for ${slideId.substring(0, 12)}...`);
+  console.log(`[TILEGEN] Timeout: ${TILEGEN_TIMEOUT_MS}ms, raw: ${rawPath}`);
 
+  // Step 1-3: Clean start
   await rm(tmpDir, { recursive: true, force: true });
+  await rm(oldTilesDir, { recursive: true, force: true });
   await mkdir(tmpDir, { recursive: true });
 
   try {
-    const cmd = `vips dzsave "${rawPath}" "${tmpOutput}" --suffix .jpg[Q=90] --tile-size ${TILE_SIZE} --overlap ${TILE_OVERLAP}`;
-    await execAsync(cmd, { timeout: TILEGEN_TIMEOUT_MS });
+    // Step 4: Run vips dzsave via spawn
+    await spawnDzsave(rawPath, tmpOutput, TILEGEN_TIMEOUT_MS);
 
-    // Count generated tiles
+    // Step 5: Count generated tiles
     let tileCount = 0;
     const levelDirs = await readdir(dzsaveOutput);
     for (const dir of levelDirs) {
@@ -207,36 +291,22 @@ export async function generateFullTilePyramid(slideId, rawPath) {
       }
     }
 
-    // Atomic swap into tiles/
-    const tilesExist = await fileExists(tilesDir);
-    if (tilesExist) {
-      const oldTilesDir = join(slideDir, '.tiles_old');
-      await rm(oldTilesDir, { recursive: true, force: true });
-      await rename(tilesDir, oldTilesDir);
-      await rename(dzsaveOutput, tilesDir);
-      await rm(oldTilesDir, { recursive: true, force: true });
-    } else {
-      await rename(dzsaveOutput, tilesDir);
-    }
+    console.log(`[TILEGEN] dzsave complete: ${tileCount} tiles generated`);
 
+    // Steps 6-8: Robust atomic swap
+    await robustSwapDirs(dzsaveOutput, tilesDir, oldTilesDir);
+
+    // Step 9: Cleanup temp
     await rm(tmpDir, { recursive: true, force: true });
 
     const elapsed = Date.now() - startTime;
-    console.log(`[TILEGEN] Complete: ${tileCount} tiles in ${elapsed}ms`);
+    console.log(`[TILEGEN] Complete: ${tileCount} tiles in ${(elapsed / 1000).toFixed(1)}s`);
 
     return { tileCount, elapsed };
   } catch (err) {
     await rm(tmpDir, { recursive: true, force: true });
+    await rm(oldTilesDir, { recursive: true, force: true });
     throw err;
-  }
-}
-
-async function fileExists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 
