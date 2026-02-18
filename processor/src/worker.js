@@ -1,5 +1,6 @@
 import { createClient } from 'redis';
 import pg from 'pg';
+import { stat } from 'fs/promises';
 import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
 import { processSVS_P0, processSVS_P1, generateFullTilePyramid } from './pipeline-svs.js';
@@ -132,6 +133,20 @@ async function processP1(job) {
 async function processJob(job) {
   const format = job.format || 'unknown';
   console.log(`Processing job: ${job.type} for slide ${job.slideId.substring(0, 12)}... [${format}]`);
+
+  // Guard: verify raw file exists before processing
+  if (job.rawPath && ['P0', 'P1', 'TILEGEN'].includes(job.type)) {
+    try {
+      const rawStats = await stat(job.rawPath);
+      console.log(`[worker] Raw file verified: ${job.rawPath} (${(rawStats.size / 1024 / 1024).toFixed(1)} MB)`);
+    } catch {
+      const msg = `Raw file not found: ${job.rawPath}`;
+      console.error(`[worker] ${msg} - aborting ${job.type} for ${job.slideId.substring(0, 12)}`);
+      await updateJob(job.jobId, { status: 'failed', error: msg });
+      await updateSlide(job.slideId, { status: 'failed' });
+      return;
+    }
+  }
 
   await updateJob(job.jobId, { status: 'running' });
   await updateSlide(job.slideId, { status: 'processing' });

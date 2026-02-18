@@ -1,7 +1,8 @@
 import { watch, createReadStream, createWriteStream } from 'fs';
-import { readdir, mkdir, stat, unlink, access } from 'fs/promises';
+import { readdir, mkdir, stat, unlink, access, rename } from 'fs/promises';
 import { join, basename, extname } from 'path';
 import { constants } from 'fs';
+import { randomUUID } from 'crypto';
 import { pipeline } from 'stream/promises';
 import { hashFile } from '../lib/hash.js';
 import { enqueueJob } from '../lib/queue.js';
@@ -70,13 +71,37 @@ async function ensureDirectories(ingestDir, rawDir, derivedDir) {
   await mkdir(derivedDir, { recursive: true });
 }
 
-// Move file across devices (copy + delete)
-async function moveFile(src, dest) {
+/**
+ * Copy file to RAW_DIR with size verification and atomic rename.
+ * Returns the final rawPath. Does NOT delete the source.
+ */
+async function commitToRaw(src, destDir, finalName, srcSize) {
+  const tempName = `.ingest-${randomUUID()}.tmp`;
+  const tempPath = join(destDir, tempName);
+  const finalPath = join(destDir, finalName);
+
+  console.log(`[ingest] copy start: ${basename(src)} -> ${tempName} (${(srcSize / 1024 / 1024).toFixed(1)} MB)`);
+
   await pipeline(
     createReadStream(src),
-    createWriteStream(dest)
+    createWriteStream(tempPath)
   );
-  await unlink(src);
+
+  // Verify copy size matches source
+  const destStats = await stat(tempPath);
+  if (destStats.size !== srcSize) {
+    await unlink(tempPath).catch(() => {});
+    throw new Error(
+      `Size mismatch after copy: src=${srcSize} dest=${destStats.size} file=${basename(src)}`
+    );
+  }
+  console.log(`[ingest] copy done, size verify ok: ${destStats.size} bytes`);
+
+  // Atomic rename temp -> final
+  await rename(tempPath, finalPath);
+  console.log(`[ingest] raw committed: ${finalPath}`);
+
+  return finalPath;
 }
 
 // ============================================================================
@@ -115,18 +140,45 @@ async function processFile(filePath) {
       }
     }
 
-    // Calculate slideId from file contents
-    console.log(`Calculating hash for ${originalName} (${(fileStats.size / 1024 / 1024).toFixed(1)} MB)...`);
-    const slideId = await hashFile(filePath);
-    console.log(`Processing file: ${originalName} -> slideId: ${slideId.substring(0, 12)}... (format: ${format})`);
+    const srcSize = fileStats.size;
+    if (srcSize === 0) {
+      console.warn(`[ingest] Skipping empty file: ${originalName}`);
+      return;
+    }
 
-    // Move to RAW_DIR (uses copy+delete for cross-device support)
+    // Calculate slideId from file contents
+    console.log(`[ingest] Hashing ${originalName} (${(srcSize / 1024 / 1024).toFixed(1)} MB)...`);
+    const slideId = await hashFile(filePath);
+    console.log(`[ingest] ${originalName} -> slideId: ${slideId.substring(0, 12)}... (format: ${format})`);
+
+    // ── Step 1: commit raw file (copy + verify + atomic rename) ──
     const rawFileName = `${slideId}_${originalName}`;
     const rawPath = join(RAW_DIR, rawFileName);
-    await moveFile(filePath, rawPath);
-    console.log(`Moved to raw: ${rawPath}`);
 
-    // Create slide record with format
+    // Skip if raw file already exists with correct size (re-scan after failed inbox unlink)
+    try {
+      const existingRaw = await stat(rawPath);
+      if (existingRaw.size === srcSize) {
+        console.log(`[ingest] Raw already exists with correct size, skipping: ${rawFileName}`);
+        // Try to clean inbox copy
+        await unlink(filePath).catch(() => {});
+        return;
+      }
+      // Exists but wrong size - overwrite
+      console.warn(`[ingest] Raw exists but size mismatch (${existingRaw.size} vs ${srcSize}), re-copying: ${rawFileName}`);
+    } catch {
+      // File doesn't exist - proceed with copy
+    }
+
+    await commitToRaw(filePath, RAW_DIR, rawFileName, srcSize);
+
+    // Double-check: raw file must exist and have correct size before proceeding
+    const rawStats = await stat(rawPath);
+    if (rawStats.size !== srcSize) {
+      throw new Error(`[ingest] Raw file verification failed after commit: expected=${srcSize} actual=${rawStats.size}`);
+    }
+
+    // ── Step 2: create DB record ──
     const slide = await createSlide({
       id: slideId,
       originalFilename: originalName,
@@ -142,16 +194,15 @@ async function processFile(filePath) {
         externalCaseBase: parsed.externalCaseBase,
         externalSlideLabel: parsed.label,
       });
-      console.log(`PathoWeb case detected: ${parsed.caseBase} label=${parsed.label} (${originalName})`);
+      console.log(`[ingest] PathoWeb case detected: ${parsed.caseBase} label=${parsed.label}`);
     }
 
-    // Create job record
+    // ── Step 3: enqueue P0 (only after raw is confirmed) ──
     const job = await createJob({
       slideId: slideId,
       type: 'P0'
     });
 
-    // Enqueue P0 job with format info
     await enqueueJob({
       jobId: job.id,
       slideId: slideId,
@@ -160,12 +211,22 @@ async function processFile(filePath) {
       format: format
     });
 
-    console.log(`Imported slide ${slideId.substring(0, 12)}... (${originalName}) [${format}]`);
+    console.log(`[ingest] P0 enqueued for ${slideId.substring(0, 12)}... (${originalName}) [${format}]`);
+
+    // ── Step 4: remove from inbox (best-effort, non-fatal) ──
+    try {
+      await unlink(filePath);
+      console.log(`[ingest] Removed from inbox: ${originalName}`);
+    } catch (unlinkErr) {
+      // Non-fatal: file stays in inbox, will be skipped on next scan (same slideId)
+      console.warn(`[ingest] Could not remove from inbox (non-fatal): ${originalName} - ${unlinkErr.message}`);
+    }
 
     // Emit SSE event for slide import
     eventBus.emitSlideImport(slideId, originalName, format);
   } catch (err) {
-    console.error(`Error processing ${originalName}:`, err.message);
+    // Ingest failed: original stays in inbox, no jobs enqueued
+    console.error(`[ingest] FAILED for ${originalName}: ${err.message}`);
   }
 }
 
@@ -232,6 +293,18 @@ export async function startWatcher() {
   }
 
   await ensureDirectories(INGEST_DIR, RAW_DIR, DERIVED_DIR);
+
+  // Clean up stale temp files from interrupted ingests
+  try {
+    const rawFiles = await readdir(RAW_DIR);
+    const staleTemps = rawFiles.filter(f => f.startsWith('.ingest-') && f.endsWith('.tmp'));
+    for (const tmp of staleTemps) {
+      await unlink(join(RAW_DIR, tmp)).catch(() => {});
+      console.log(`[ingest] Cleaned stale temp: ${tmp}`);
+    }
+  } catch {
+    // RAW_DIR might not be readable yet
+  }
 
   // Process any existing files first
   await scanExisting(INGEST_DIR);
