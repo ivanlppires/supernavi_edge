@@ -8,7 +8,7 @@
 
 param(
   [string]$CloudUrl = "https://cloud.supernavi.app",
-  [string]$CloudApiKey = "snavi-dev-bridge-key-2026"
+  [string]$CloudApiKey = "TM8fIXcFRlJT/p6Mlxaqa/Dc9J0R8dQuByyYxSUIoiQ="
 )
 
 $ErrorActionPreference = "Stop"
