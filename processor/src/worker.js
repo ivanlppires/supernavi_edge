@@ -204,34 +204,8 @@ async function processJob(job) {
 
       console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
 
-      // Emit SlideRegistered outbox event for cloud sync
-      try {
-        const slideRow = await getPool().query(
-          'SELECT external_case_id, external_case_base, external_slide_label, original_filename FROM slides WHERE id = $1',
-          [job.slideId]
-        );
-        const slide = slideRow.rows[0];
-        if (slide) {
-          await getPool().query(
-            `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-             VALUES ($1, $2, $3, $4)`,
-            ['slide', job.slideId, 'registered', JSON.stringify({
-              slide_id: job.slideId,
-              case_id: null,
-              svs_filename: slide.original_filename,
-              width: result.width,
-              height: result.height,
-              mpp: result.mpp || 0,
-              external_case_id: slide.external_case_id || null,
-              external_case_base: slide.external_case_base || null,
-              external_slide_label: slide.external_slide_label || null,
-            })]
-          );
-          console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
-        }
-      } catch (outboxErr) {
-        console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
-      }
+      // NOTE: SlideRegistered outbox event is emitted after TILEGEN completes,
+      // so the slide only appears in the extension when fully navigable.
 
       // Enqueue TILEGEN job for full tile pyramid generation
       if (isWSIFormat(format)) {
@@ -320,6 +294,35 @@ async function processJob(job) {
         });
 
         console.log(`TILEGEN complete for ${job.slideId.substring(0, 12)}: ${result.tileCount} tiles in ${result.elapsed}ms`);
+
+        // Emit SlideRegistered outbox event now that tiles are fully ready
+        try {
+          const slideRow = await getPool().query(
+            'SELECT external_case_id, external_case_base, external_slide_label, original_filename, width, height, mpp FROM slides WHERE id = $1',
+            [job.slideId]
+          );
+          const slide = slideRow.rows[0];
+          if (slide) {
+            await getPool().query(
+              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+               VALUES ($1, $2, $3, $4)`,
+              ['slide', job.slideId, 'registered', JSON.stringify({
+                slide_id: job.slideId,
+                case_id: null,
+                svs_filename: slide.original_filename,
+                width: slide.width || 0,
+                height: slide.height || 0,
+                mpp: parseFloat(slide.mpp) || 0,
+                external_case_id: slide.external_case_id || null,
+                external_case_base: slide.external_case_base || null,
+                external_slide_label: slide.external_slide_label || null,
+              })]
+            );
+            console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)} (after TILEGEN)`);
+          }
+        } catch (outboxErr) {
+          console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
+        }
 
         // Cloud upload: send full tile pyramid to Wasabi and notify cloud
         if (process.env.CLOUD_UPLOAD_ENABLED === 'true') {

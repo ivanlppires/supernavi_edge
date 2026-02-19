@@ -239,13 +239,13 @@ async function retryPendingOcr() {
         ocrStatus: 'done',
       });
 
-      // Re-emit SlideRegistered outbox event for cloud sync
+      // Re-emit SlideRegistered only if TILEGEN is already done (slide fully ready)
       const slideRow = await query(
-        'SELECT width, height, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+        'SELECT width, height, mpp, tilegen_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
         [slide.id]
       );
       const s = slideRow.rows[0];
-      if (s) {
+      if (s && s.tilegen_status === 'done') {
         await query(
           `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
            VALUES ($1, $2, $3, $4)`,
@@ -255,13 +255,15 @@ async function retryPendingOcr() {
             svs_filename: newFilename,
             width: s.width || 0,
             height: s.height || 0,
-            mpp: 0,
+            mpp: parseFloat(s.mpp) || 0,
             external_case_id: s.external_case_id,
             external_case_base: s.external_case_base,
             external_slide_label: s.external_slide_label,
           })]
         );
         console.log(`[Scanner] Re-emitted SlideRegistered for ${slide.id.substring(0, 12)} with new name ${newFilename}`);
+      } else {
+        console.log(`[Scanner] OCR updated for ${slide.id.substring(0, 12)} but TILEGEN not done yet — SlideRegistered will emit after TILEGEN`);
       }
     } catch (err) {
       console.error(`[Scanner] OCR retry error for ${slide.id.substring(0, 12)}: ${err.message}`);
