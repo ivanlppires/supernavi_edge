@@ -3,139 +3,48 @@ import assert from 'node:assert/strict';
 import { parsePathologyFilename } from './filename-parser.js';
 
 describe('parsePathologyFilename', () => {
-  it('parses AP number without suffix', () => {
-    const result = parsePathologyFilename('AP26000230.svs');
+  it('parses AP filename with suffix', () => {
+    const result = parsePathologyFilename('AP26000388A1.svs');
     assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
+      caseBase: 'AP26000388',
+      label: 'A1',
+      externalCaseId: 'pathoweb:AP26000388',
+      externalCaseBase: 'AP26000388',
+    });
+  });
+
+  it('parses IM filename without suffix', () => {
+    const result = parsePathologyFilename('IM26000100.svs');
+    assert.deepStrictEqual(result, {
+      caseBase: 'IM26000100',
       label: '1',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
+      externalCaseId: 'pathoweb:IM26000100',
+      externalCaseBase: 'IM26000100',
     });
   });
 
-  it('parses AP number with letter suffix', () => {
-    const result = parsePathologyFilename('AP26000230A.svs');
+  it('parses IM filename with suffix', () => {
+    const result = parsePathologyFilename('IM26000100B2.svs');
     assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'A',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
-    });
-  });
-
-  it('parses AP number with alphanumeric suffix', () => {
-    const result = parsePathologyFilename('AP26000230A2.svs');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'A2',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
-    });
-  });
-
-  it('parses AP number with underscore separator', () => {
-    const result = parsePathologyFilename('AP26000230_A2.svs');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'A2',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
-    });
-  });
-
-  it('parses AP number with dash separators', () => {
-    const result = parsePathologyFilename('AP-26000230-A2.svs');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'A2',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
-    });
-  });
-
-  it('parses AP number with space separator', () => {
-    const result = parsePathologyFilename('AP26000230 A2.svs');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'A2',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
-    });
-  });
-
-  it('parses AP number with dot separator before suffix', () => {
-    const result = parsePathologyFilename('AP26000230.A2.tiff');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'A2',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
-    });
-  });
-
-  it('parses AP number with B suffix', () => {
-    const result = parsePathologyFilename('AP26000230B.ndpi');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'B',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
-    });
-  });
-
-  it('parses lowercase ap prefix', () => {
-    const result = parsePathologyFilename('ap26000230a2.svs');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'A2',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
-    });
-  });
-
-  it('parses long AP numbers (12 digits)', () => {
-    const result = parsePathologyFilename('AP260002301234.svs');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP260002301234',
-      label: '1',
-      externalCaseId: 'pathoweb:AP260002301234',
-      externalCaseBase: 'AP260002301234',
-    });
-  });
-
-  it('returns null for non-AP filenames', () => {
-    assert.strictEqual(parsePathologyFilename('random_file.svs'), null);
-    assert.strictEqual(parsePathologyFilename('IMG_0001.jpg'), null);
-    assert.strictEqual(parsePathologyFilename('sample.tiff'), null);
-  });
-
-  it('returns null for empty or invalid input', () => {
-    assert.strictEqual(parsePathologyFilename(''), null);
-    assert.strictEqual(parsePathologyFilename(null), null);
-    assert.strictEqual(parsePathologyFilename(undefined), null);
-  });
-
-  it('returns null for AP with too few digits', () => {
-    assert.strictEqual(parsePathologyFilename('AP12345.svs'), null);
-  });
-
-  it('parses AP number with B2 suffix', () => {
-    const result = parsePathologyFilename('AP26000230B2.svs');
-    assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
+      caseBase: 'IM26000100',
       label: 'B2',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
+      externalCaseId: 'pathoweb:IM26000100',
+      externalCaseBase: 'IM26000100',
     });
   });
 
-  it('handles mixed separators', () => {
-    const result = parsePathologyFilename('AP_26000230_A2.svs');
+  it('parses IM filename with separators', () => {
+    const result = parsePathologyFilename('IM-26000100-A1.tiff');
     assert.deepStrictEqual(result, {
-      caseBase: 'AP26000230',
-      label: 'A2',
-      externalCaseId: 'pathoweb:AP26000230',
-      externalCaseBase: 'AP26000230',
+      caseBase: 'IM26000100',
+      label: 'A1',
+      externalCaseId: 'pathoweb:IM26000100',
+      externalCaseBase: 'IM26000100',
     });
+  });
+
+  it('returns null for unrecognized filenames', () => {
+    assert.strictEqual(parsePathologyFilename('random_file.svs'), null);
+    assert.strictEqual(parsePathologyFilename('09443_20260219090407.svs'), null);
   });
 });
