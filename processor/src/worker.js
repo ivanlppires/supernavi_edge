@@ -325,7 +325,7 @@ async function processJob(job) {
         if (process.env.CLOUD_UPLOAD_ENABLED === 'true') {
           try {
             const slideRow = await getPool().query(
-              'SELECT original_filename, width, height, mpp, scanner, max_level FROM slides WHERE id = $1',
+              'SELECT original_filename, width, height, mpp, max_level FROM slides WHERE id = $1',
               [job.slideId]
             );
             const slide = slideRow.rows[0];
@@ -335,7 +335,7 @@ async function processJob(job) {
                 width: slide.width,
                 height: slide.height,
                 mpp: slide.mpp,
-                scanner: slide.scanner,
+                scanner: undefined,
                 maxLevel: slide.max_level,
               });
               console.log(`[UPLOAD] Result for ${job.slideId.substring(0, 12)}: ${uploadResult.status}`);
