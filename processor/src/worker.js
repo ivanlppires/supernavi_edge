@@ -6,6 +6,7 @@ import { processP1 as processImageP1 } from './pipeline-p1.js';
 import { processSVS_P0, processSVS_P1, generateFullTilePyramid } from './pipeline-svs.js';
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 import { deleteSlidePreview } from './preview/wasabiUploader.js';
+import { uploadSlideToCloud } from './cloud-uploader.js';
 
 const { Pool } = pg;
 
@@ -319,6 +320,30 @@ async function processJob(job) {
         });
 
         console.log(`TILEGEN complete for ${job.slideId.substring(0, 12)}: ${result.tileCount} tiles in ${result.elapsed}ms`);
+
+        // Cloud upload: send full tile pyramid to Wasabi and notify cloud
+        if (process.env.CLOUD_UPLOAD_ENABLED === 'true') {
+          try {
+            const slideRow = await getPool().query(
+              'SELECT original_filename, width, height, mpp, scanner, max_level FROM slides WHERE id = $1',
+              [job.slideId]
+            );
+            const slide = slideRow.rows[0];
+            if (slide) {
+              const uploadResult = await uploadSlideToCloud(job.slideId, {
+                originalFilename: slide.original_filename,
+                width: slide.width,
+                height: slide.height,
+                mpp: slide.mpp,
+                scanner: slide.scanner,
+                maxLevel: slide.max_level,
+              });
+              console.log(`[UPLOAD] Result for ${job.slideId.substring(0, 12)}: ${uploadResult.status}`);
+            }
+          } catch (uploadErr) {
+            console.error(`[UPLOAD] Failed for ${job.slideId.substring(0, 12)} (non-fatal): ${uploadErr.message}`);
+          }
+        }
       } catch (tilegenErr) {
         console.error(`TILEGEN failed for ${job.slideId.substring(0, 12)}: ${tilegenErr.message}`);
         await updateSlide(job.slideId, { tilegen_status: 'failed' });

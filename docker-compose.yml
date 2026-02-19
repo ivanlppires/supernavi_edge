@@ -79,6 +79,11 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-true}
+      # Cloud-first upload (after TILEGEN)
+      CLOUD_UPLOAD_ENABLED: ${CLOUD_UPLOAD_ENABLED:-false}
+      CLOUD_API_URL: ${CLOUD_API_URL:-http://host.docker.internal:3001}
+      EDGE_KEY: ${EDGE_KEY:-}
+      UPLOAD_CONCURRENCY: ${UPLOAD_CONCURRENCY:-8}
       # TILEGEN_TIMEOUT_MS: 600000  # 10 min default for vips dzsave
     depends_on:
       db:
@@ -92,6 +97,8 @@ services:
       - ./data/derived:/data/derived
       - ./config:/config:ro
       - ${SCANNER_DIR:-./data/scanner}:/scanner:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   # Sync Engine - Local to Cloud Push
   sync:
