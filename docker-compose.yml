@@ -25,6 +25,8 @@ services:
       SCANNER_ENABLED: ${SCANNER_ENABLED:-false}
       SCANNER_DIR: /scanner
       SCANNER_INTERVAL_MS: ${SCANNER_INTERVAL_MS:-120000}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LABEL_OCR_ENABLED: ${LABEL_OCR_ENABLED:-true}
     depends_on:
       db:
         condition: service_healthy
@@ -33,7 +35,7 @@ services:
     networks:
       - supernavi-internal
     volumes:
-      - C:/Slides:/data/inbox
+      - ./data/inbox:/data/inbox
       - ./data/raw:/data/raw
       - ./data/derived:/data/derived
       - ./db/migrations:/app/db/migrations:ro

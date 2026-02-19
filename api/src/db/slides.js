@@ -104,6 +104,30 @@ export async function updateLevelReadyMax(id, levelReadyMax) {
 }
 
 /**
+ * Update a slide's original_filename and external fields after OCR rename.
+ */
+export async function updateSlideOcr(id, { originalFilename, externalCaseId, externalCaseBase, externalSlideLabel, ocrStatus, dsmetaPath }) {
+  const sets = [];
+  const vals = [];
+  let idx = 1;
+
+  if (originalFilename !== undefined) { sets.push(`original_filename = $${idx++}`); vals.push(originalFilename); }
+  if (externalCaseId !== undefined) { sets.push(`external_case_id = $${idx++}`); vals.push(externalCaseId); }
+  if (externalCaseBase !== undefined) { sets.push(`external_case_base = $${idx++}`); vals.push(externalCaseBase); }
+  if (externalSlideLabel !== undefined) { sets.push(`external_slide_label = $${idx++}`); vals.push(externalSlideLabel); }
+  if (ocrStatus !== undefined) { sets.push(`ocr_status = $${idx++}`); vals.push(ocrStatus); }
+  if (dsmetaPath !== undefined) { sets.push(`dsmeta_path = $${idx++}`); vals.push(dsmetaPath); }
+
+  if (sets.length === 0) return;
+
+  vals.push(id);
+  await query(
+    `UPDATE slides SET ${sets.join(', ')} WHERE id = $${idx}`,
+    vals
+  );
+}
+
+/**
  * Delete a slide and its associated jobs
  * @param {string} id - Slide ID
  * @returns {Promise<{deleted: boolean, slide: object|null}>}
@@ -122,4 +146,14 @@ export async function deleteSlide(id) {
   await query('DELETE FROM slides WHERE id = $1', [id]);
 
   return { deleted: true, slide };
+}
+
+/**
+ * List slides with pending OCR status for retry.
+ */
+export async function listPendingOcrSlides() {
+  const result = await query(
+    `SELECT id, original_filename, dsmeta_path, format FROM slides WHERE ocr_status = 'pending'`
+  );
+  return result.rows;
 }

@@ -19,7 +19,10 @@ import { join, extname } from 'path';
 import { constants } from 'fs';
 import { hashFile } from '../lib/hash.js';
 import { parseDsmeta, parseMoticPath } from '../lib/dsmeta-parser.js';
-import { createSlide, createJob, updateSlide } from '../db/slides.js';
+import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides } from '../db/slides.js';
+import { query } from '../db/index.js';
+import { ocrLabel, isOcrEnabled } from '../lib/label-ocr.js';
+import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { scannerFileExists, insertScannerFile, getAllScannerFilePaths } from '../db/scanner.js';
 import { enqueueJob } from '../lib/queue.js';
 import { eventBus } from './events.js';
@@ -84,13 +87,76 @@ async function processNewFile(filePath) {
   const slideId = await hashFile(filePath);
   console.log(`[Scanner] ${filename} -> slideId: ${slideId.substring(0, 12)}...`);
 
+  // --- OCR label before registration ---
+  let effectiveFilename = filename;
+  let ocrStatus = null;
+  let dsmetaPath = null;
+  let externalFields = null;
+
+  const dsmetaDir = filePath + '.dsmeta';
+  const labelPath = dsmetaDir + '/label.jpg';
+
+  if (isOcrEnabled()) {
+    try {
+      await access(labelPath, constants.R_OK);
+      dsmetaPath = dsmetaDir;
+
+      console.log(`[Scanner] OCR: found label at ${labelPath}`);
+      const ocrResult = await ocrLabel(labelPath);
+
+      if (ocrResult) {
+        const newFilename = ocrResult.fullName + '.' + format;
+        console.log(`[Scanner] OCR: ${filename} -> ${newFilename}`);
+        effectiveFilename = newFilename;
+        ocrStatus = 'done';
+        externalFields = {
+          externalCaseId: `pathoweb:${ocrResult.caseBase}`,
+          externalCaseBase: ocrResult.caseBase,
+          externalSlideLabel: ocrResult.fullName,
+        };
+      } else {
+        console.log(`[Scanner] OCR: could not read label for ${filename}, processing with original name`);
+        ocrStatus = 'pending';
+      }
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        // No label.jpg — OCR not applicable
+        console.log(`[Scanner] No label.jpg in .dsmeta for ${filename}`);
+      } else {
+        console.error(`[Scanner] OCR error for ${filename}: ${err.message}`);
+        ocrStatus = 'pending';
+        dsmetaPath = dsmetaDir;
+      }
+    }
+  }
+
+  // If OCR didn't provide external fields, try filename parser
+  if (!externalFields) {
+    const parsed = parsePathologyFilename(effectiveFilename);
+    if (parsed) {
+      externalFields = {
+        externalCaseId: parsed.externalCaseId,
+        externalCaseBase: parsed.externalCaseBase,
+        externalSlideLabel: `${parsed.caseBase}${parsed.label}`,
+      };
+    }
+  }
+
+  // --- Register slide ---
   await createSlide({
     id: slideId,
-    originalFilename: filename,
+    originalFilename: effectiveFilename,
     rawPath: filePath,
     format,
   });
 
+  // Set external fields + OCR status
+  const slideUpdates = { ...(externalFields || {}), ocrStatus, dsmetaPath };
+  if (Object.values(slideUpdates).some(v => v !== null && v !== undefined)) {
+    await updateSlideOcr(slideId, slideUpdates);
+  }
+
+  // --- Parse dsmeta for barcode/guid ---
   const pathInfo = parseMoticPath(filePath);
   let barcode = null;
   let guid = null;
@@ -102,7 +168,6 @@ async function processNewFile(filePath) {
     scanDatetime = pathInfo.scanDatetime;
   }
 
-  const dsmetaDir = filePath + '.dsmeta';
   const dsmeta = await parseDsmeta(dsmetaDir);
   if (dsmeta) {
     barcode = dsmeta.barcode || barcode;
@@ -121,6 +186,7 @@ async function processNewFile(filePath) {
     scanDatetime,
   });
 
+  // --- Enqueue P0 processing ---
   const job = await createJob({ slideId, type: 'P0' });
   await enqueueJob({
     jobId: job.id,
@@ -130,10 +196,77 @@ async function processNewFile(filePath) {
     format,
   });
 
-  eventBus.emitSlideImport(slideId, filename, format);
+  eventBus.emitSlideImport(slideId, effectiveFilename, format);
 
-  console.log(`[Scanner] Registered slide ${slideId.substring(0, 12)} (${filename}, barcode=${barcode || 'unknown'})`);
+  console.log(`[Scanner] Registered slide ${slideId.substring(0, 12)} (${effectiveFilename}, barcode=${barcode || 'unknown'}, ocr=${ocrStatus || 'n/a'})`);
   return slideId;
+}
+
+/**
+ * Retry OCR for slides that previously failed.
+ * On success: update original_filename, external fields, and ocr_status.
+ * Re-emit SlideRegistered outbox event so cloud picks up the new name.
+ */
+async function retryPendingOcr() {
+  const pendingSlides = await listPendingOcrSlides();
+
+  if (pendingSlides.length === 0) return;
+
+  console.log(`[Scanner] Retrying OCR for ${pendingSlides.length} pending slides...`);
+
+  for (const slide of pendingSlides) {
+    try {
+      const labelPath = slide.dsmeta_path + '/label.jpg';
+      await access(labelPath, constants.R_OK);
+
+      const ocrResult = await ocrLabel(labelPath);
+      if (!ocrResult) {
+        console.log(`[Scanner] OCR retry still failed for ${slide.id.substring(0, 12)}`);
+        continue;
+      }
+
+      const format = slide.format || 'svs';
+      const newFilename = ocrResult.fullName + '.' + format;
+
+      console.log(`[Scanner] OCR retry success: ${slide.original_filename} -> ${newFilename}`);
+
+      // Update slide DB
+      await updateSlideOcr(slide.id, {
+        originalFilename: newFilename,
+        externalCaseId: `pathoweb:${ocrResult.caseBase}`,
+        externalCaseBase: ocrResult.caseBase,
+        externalSlideLabel: ocrResult.fullName,
+        ocrStatus: 'done',
+      });
+
+      // Re-emit SlideRegistered outbox event for cloud sync
+      const slideRow = await query(
+        'SELECT width, height, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+        [slide.id]
+      );
+      const s = slideRow.rows[0];
+      if (s) {
+        await query(
+          `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+           VALUES ($1, $2, $3, $4)`,
+          ['slide', slide.id, 'registered', JSON.stringify({
+            slide_id: slide.id,
+            case_id: null,
+            svs_filename: newFilename,
+            width: s.width || 0,
+            height: s.height || 0,
+            mpp: 0,
+            external_case_id: s.external_case_id,
+            external_case_base: s.external_case_base,
+            external_slide_label: s.external_slide_label,
+          })]
+        );
+        console.log(`[Scanner] Re-emitted SlideRegistered for ${slide.id.substring(0, 12)} with new name ${newFilename}`);
+      }
+    } catch (err) {
+      console.error(`[Scanner] OCR retry error for ${slide.id.substring(0, 12)}: ${err.message}`);
+    }
+  }
 }
 
 /**
@@ -157,6 +290,15 @@ export async function runScan() {
 
     const allFiles = await findSvsFiles(scannerDir);
     console.log(`[Scanner] Found ${allFiles.length} SVS files, ${knownPaths.size} already known`);
+
+    // Retry OCR for previously failed slides
+    if (isOcrEnabled()) {
+      try {
+        await retryPendingOcr();
+      } catch (err) {
+        console.error(`[Scanner] OCR retry batch error: ${err.message}`);
+      }
+    }
 
     const newFiles = allFiles.filter(f => !knownPaths.has(f));
 
