@@ -17,6 +17,7 @@ services:
       RAW_DIR: /data/raw
       DERIVED_DIR: /data/derived
       TILES_HOT_DIR: /data/tiles_hot
+      TILE_JPEG_QUALITY: ${TILE_JPEG_QUALITY:-80}
       MIGRATIONS_DIR: /app/db/migrations
       CLOUD_SYNC_URL: ${CLOUD_SYNC_URL:-http://mock-cloud:4000}
       # Edge Tunnel Configuration (use host.docker.internal for local testing)
@@ -72,6 +73,10 @@ services:
       RAW_DIR: /data/raw
       DERIVED_DIR: /data/derived
       TILES_HOT_DIR: /data/tiles_hot
+      # TILEGEN performance tuning
+      VIPS_CONCURRENCY: ${VIPS_CONCURRENCY:-0}
+      TILE_JPEG_QUALITY: ${TILE_JPEG_QUALITY:-80}
+      # TILEGEN_TIMEOUT_MS: 600000  # 10 min default for vips dzsave
       # Remote Preview Publisher (Wasabi S3)
       PREVIEW_REMOTE_ENABLED: ${PREVIEW_REMOTE_ENABLED:-false}
       PREVIEW_MAX_LEVEL: ${PREVIEW_MAX_LEVEL:-6}
@@ -88,8 +93,9 @@ services:
       CLOUD_UPLOAD_ENABLED: ${CLOUD_UPLOAD_ENABLED:-false}
       CLOUD_API_URL: ${CLOUD_API_URL:-http://host.docker.internal:3001}
       EDGE_KEY: ${EDGE_KEY:-}
-      UPLOAD_CONCURRENCY: ${UPLOAD_CONCURRENCY:-8}
-      # TILEGEN_TIMEOUT_MS: 600000  # 10 min default for vips dzsave
+      UPLOAD_CONCURRENCY: ${UPLOAD_CONCURRENCY:-64}
+      ARCHIVE_PART_SIZE_MB: ${ARCHIVE_PART_SIZE_MB:-20}
+      ARCHIVE_QUEUE_SIZE: ${ARCHIVE_QUEUE_SIZE:-8}
     depends_on:
       db:
         condition: service_healthy

@@ -30,7 +30,7 @@ async function cleanupTemp(path) {
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILE_SIZE = 256;
-const TILE_QUALITY = 90;
+const TILE_QUALITY = parseInt(process.env.TILE_JPEG_QUALITY || '80', 10);
 const GENERATION_TIMEOUT_MS = parseInt(process.env.TILE_GENERATION_TIMEOUT_MS || '60000', 10);
 const MAX_CONCURRENT_GENERATIONS = parseInt(process.env.TILE_CONCURRENCY || '4', 10);
 

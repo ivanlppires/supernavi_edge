@@ -41,6 +41,7 @@ function spawnAsync(cmd, { timeout } = {}) {
 }
 const TILE_SIZE = 256;
 const TILE_OVERLAP = 0;
+const TILE_JPEG_QUALITY = parseInt(process.env.TILE_JPEG_QUALITY || '80', 10);
 
 /**
  * Get slide properties using openslide-show-properties
@@ -210,7 +211,7 @@ export async function generateFullTilePyramid(slideId, rawPath) {
   const hotTilesDir = join(hotSlideDir, 'tiles');
   const startTime = Date.now();
 
-  console.log(`[TILEGEN] Starting vips dzsave for ${slideId.substring(0, 12)}...`);
+  console.log(`[TILEGEN] Starting vips dzsave for ${slideId.substring(0, 12)} (Q=${TILE_JPEG_QUALITY}, VIPS_CONCURRENCY=${process.env.VIPS_CONCURRENCY || 'auto'})`);
 
   // Clean previous residue from tmpfs
   await execAsync(`rm -rf "${hotSlideDir}"`).catch(() => {});
@@ -218,7 +219,7 @@ export async function generateFullTilePyramid(slideId, rawPath) {
 
   try {
     // Phase 1: dzsave to tmpfs (RAM-backed, blazing fast)
-    const cmd = `vips dzsave "${rawPath}" "${hotTmpOutput}" --suffix .jpg[Q=90] --tile-size ${TILE_SIZE} --overlap ${TILE_OVERLAP}`;
+    const cmd = `vips dzsave "${rawPath}" "${hotTmpOutput}" --suffix .jpg[Q=${TILE_JPEG_QUALITY}] --tile-size ${TILE_SIZE} --overlap ${TILE_OVERLAP}`;
     await execAsync(cmd, { timeout: TILEGEN_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 });
 
     // Count generated tiles

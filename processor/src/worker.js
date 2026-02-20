@@ -332,6 +332,12 @@ async function processJob(job) {
         // Cloud upload: send full tile pyramid to Wasabi and notify cloud
         if (process.env.CLOUD_UPLOAD_ENABLED === 'true') {
           try {
+            await updateSlide(job.slideId, { cloud_upload_status: 'uploading' });
+            await publishEvent('cloud:uploading', {
+              slideId: job.slideId,
+              timestamp: Date.now(),
+            });
+
             const slideRow = await getPool().query(
               'SELECT original_filename, width, height, mpp, max_level FROM slides WHERE id = $1',
               [job.slideId]
@@ -346,9 +352,29 @@ async function processJob(job) {
                 scanner: undefined,
                 maxLevel: slide.max_level,
               });
-              console.log(`[UPLOAD] Result for ${job.slideId.substring(0, 12)}: ${uploadResult.status}`);
+
+              await updateSlide(job.slideId, {
+                cloud_upload_status: 'done',
+                cloud_upload_mode: uploadResult.mode || 'individual',
+                cloud_upload_at: new Date().toISOString(),
+              });
+              await publishEvent('cloud:ready', {
+                slideId: job.slideId,
+                mode: uploadResult.mode,
+                tileCount: uploadResult.tileCount,
+                elapsed: uploadResult.elapsed,
+                timestamp: Date.now(),
+              });
+
+              console.log(`[UPLOAD] Result for ${job.slideId.substring(0, 12)}: ${uploadResult.status} (${uploadResult.mode || 'unknown'} mode, ${((uploadResult.elapsed || 0) / 1000).toFixed(1)}s)`);
             }
           } catch (uploadErr) {
+            await updateSlide(job.slideId, { cloud_upload_status: 'failed' }).catch(() => {});
+            await publishEvent('cloud:failed', {
+              slideId: job.slideId,
+              error: uploadErr.message,
+              timestamp: Date.now(),
+            }).catch(() => {});
             console.error(`[UPLOAD] Failed for ${job.slideId.substring(0, 12)} (non-fatal): ${uploadErr.message}`);
           }
         }
