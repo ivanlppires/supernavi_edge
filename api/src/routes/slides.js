@@ -9,6 +9,7 @@ import { generateTile, getPendingCount } from '../services/tilegen-svs.js';
 import { enqueueJob } from '../lib/queue.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
+const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
 const INGEST_DIR = process.env.INGEST_DIR || '/data/inbox';
 const RAW_DIR = process.env.RAW_DIR || '/data/raw';
 
@@ -289,9 +290,20 @@ export default async function slidesRoutes(fastify) {
   // Get tile (with on-demand generation for WSI formats)
   fastify.get('/slides/:slideId/tiles/:z/:x/:y.jpg', async (request, reply) => {
     const { slideId, z, x, y } = request.params;
+    const hotTilePath = join(TILES_HOT_DIR, slideId, 'tiles', z, `${x}_${y}.jpg`);
     const tilePath = join(DERIVED_DIR, slideId, 'tiles', z, `${x}_${y}.jpg`);
 
-    // Check if tile exists on disk (fast path)
+    // Check hot tiles first (tmpfs, RAM-backed, fastest)
+    try {
+      await access(hotTilePath);
+      reply.header('Content-Type', 'image/jpeg');
+      reply.header('Cache-Control', 'public, max-age=31536000, immutable');
+      return createReadStream(hotTilePath);
+    } catch {
+      // Not in hot cache
+    }
+
+    // Check persistent tiles (bind mount)
     try {
       await access(tilePath);
       reply.header('Content-Type', 'image/jpeg');

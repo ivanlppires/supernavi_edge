@@ -3,7 +3,7 @@ import pg from 'pg';
 import { stat } from 'fs/promises';
 import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
-import { processSVS_P0, processSVS_P1, generateFullTilePyramid } from './pipeline-svs.js';
+import { processSVS_P0, processSVS_P1, generateFullTilePyramid, persistTilesBackground } from './pipeline-svs.js';
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 import { deleteSlidePreview } from './preview/wasabiUploader.js';
 import { uploadSlideToCloud } from './cloud-uploader.js';
@@ -294,6 +294,11 @@ async function processJob(job) {
         });
 
         console.log(`TILEGEN complete for ${job.slideId.substring(0, 12)}: ${result.tileCount} tiles in ${result.elapsed}ms`);
+
+        // Background: persist hot tiles to bind-mount storage (non-blocking)
+        persistTilesBackground(job.slideId).catch(err => {
+          console.error(`[PERSIST] Failed for ${job.slideId.substring(0, 12)}: ${err.message}`);
+        });
 
         // Emit SlideRegistered outbox event now that tiles are fully ready
         try {

@@ -10,6 +10,7 @@ import { readdir, readFile, writeFile } from 'fs/promises';
 import { join } from 'path';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
+const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
 const CLOUD_API_URL = process.env.CLOUD_API_URL || 'http://localhost:3001';
 const EDGE_KEY = process.env.EDGE_KEY || '';
 const UPLOAD_CONCURRENCY = parseInt(process.env.UPLOAD_CONCURRENCY || '8', 10);
@@ -35,10 +36,22 @@ function getS3Client() {
 }
 
 /**
+ * Resolve tiles directory: check hot (tmpfs) first, then persistent (bind mount).
+ */
+async function resolveTilesDir(slideId) {
+  const hotDir = join(TILES_HOT_DIR, slideId, 'tiles');
+  try {
+    await readdir(hotDir);
+    return hotDir;
+  } catch {}
+  return join(DERIVED_DIR, slideId, 'tiles');
+}
+
+/**
  * Build tile manifest: counts per level + total
  */
 async function buildTileManifest(slideId) {
-  const tilesDir = join(DERIVED_DIR, slideId, 'tiles');
+  const tilesDir = await resolveTilesDir(slideId);
   const levelCounts = {};
   let totalCount = 0;
 
@@ -58,7 +71,7 @@ async function buildTileManifest(slideId) {
  * Upload all tiles to S3 with concurrency control
  */
 async function uploadTiles(slideId, s3Prefix, s3Client, bucket) {
-  const tilesDir = join(DERIVED_DIR, slideId, 'tiles');
+  const tilesDir = await resolveTilesDir(slideId);
   const levels = await readdir(tilesDir);
   const uploadQueue = [];
 

@@ -16,6 +16,7 @@ services:
       INGEST_DIR: /data/inbox
       RAW_DIR: /data/raw
       DERIVED_DIR: /data/derived
+      TILES_HOT_DIR: /data/tiles_hot
       MIGRATIONS_DIR: /app/db/migrations
       CLOUD_SYNC_URL: ${CLOUD_SYNC_URL:-http://mock-cloud:4000}
       # Edge Tunnel Configuration (use host.docker.internal for local testing)
@@ -38,6 +39,7 @@ services:
       - ./data/inbox:/data/inbox
       - ./data/raw:/data/raw
       - ./data/derived:/data/derived
+      - tiles_hot:/data/tiles_hot
       - ./db/migrations:/app/db/migrations:ro
       - ./config:/config
       - ${SCANNER_DIR:-./data/scanner}:/scanner:ro
@@ -69,6 +71,7 @@ services:
       DATABASE_URL: postgres://supernavi:supernavi@db:5432/supernavi
       RAW_DIR: /data/raw
       DERIVED_DIR: /data/derived
+      TILES_HOT_DIR: /data/tiles_hot
       # Remote Preview Publisher (Wasabi S3)
       PREVIEW_REMOTE_ENABLED: ${PREVIEW_REMOTE_ENABLED:-false}
       PREVIEW_MAX_LEVEL: ${PREVIEW_MAX_LEVEL:-6}
@@ -97,6 +100,7 @@ services:
     volumes:
       - ./data/raw:/data/raw:ro
       - ./data/derived:/data/derived
+      - tiles_hot:/data/tiles_hot
       - ./config:/config:ro
       - ${SCANNER_DIR:-./data/scanner}:/scanner:ro
     extra_hosts:
@@ -176,3 +180,9 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  tiles_hot:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=2147483648
