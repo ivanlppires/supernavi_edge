@@ -329,6 +329,9 @@ async function processJob(job) {
           console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
         }
 
+        // Restore slide status to 'ready' after TILEGEN completes
+        await updateSlide(job.slideId, { status: 'ready' });
+
         // Cloud upload: send full tile pyramid to Wasabi and notify cloud
         if (process.env.CLOUD_UPLOAD_ENABLED === 'true') {
           try {
