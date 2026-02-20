@@ -195,13 +195,16 @@ async function uploadTilesPool(slideId, s3Prefix, s3Client, bucket) {
 
   let uploaded = 0;
   let failed = 0;
-  let index = 0;
   const startTime = Date.now();
 
+  // Use a shared queue that workers consume from safely
+  const queue = [...uploadQueue];
+
   async function worker() {
-    while (index < uploadQueue.length) {
-      const i = index++;
-      const { localPath, s3Key } = uploadQueue[i];
+    while (queue.length > 0) {
+      const item = queue.shift();
+      if (!item) break;
+      const { localPath, s3Key } = item;
       let success = false;
 
       for (let attempt = 1; attempt <= 3; attempt++) {
