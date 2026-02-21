@@ -68,7 +68,8 @@ export function parseOcrResponse(text) {
   const match = cleaned.match(OCR_RESPONSE_REGEX);
   if (!match) return null;
 
-  const caseBase = match[1];
+  // Normalize PA → AP (same department, different label convention)
+  const caseBase = match[1].replace(/^PA/, 'AP');
   const slideLabel = match[2] || '';
   const fullName = caseBase + slideLabel;
 

@@ -63,20 +63,20 @@ describe('parseOcrResponse', () => {
     });
   });
 
-  it('parses PA prefix response', () => {
+  it('normalizes PA prefix to AP', () => {
     const result = parseOcrResponse('PA26000019');
     assert.deepStrictEqual(result, {
-      fullName: 'PA26000019',
-      caseBase: 'PA26000019',
+      fullName: 'AP26000019',
+      caseBase: 'AP26000019',
       slideLabel: '',
     });
   });
 
-  it('parses PA prefix with suffix', () => {
+  it('normalizes PA prefix with suffix to AP', () => {
     const result = parseOcrResponse('PA26000019A1');
     assert.deepStrictEqual(result, {
-      fullName: 'PA26000019A1',
-      caseBase: 'PA26000019',
+      fullName: 'AP26000019A1',
+      caseBase: 'AP26000019',
       slideLabel: 'A1',
     });
   });
