@@ -8,15 +8,16 @@
  *
  * Prefixes:
  *   AP = Anatomopatológico
+ *   PA = Patologia Anatômica (alias for AP)
  *   IM = Imuno-histoquímico
  *
- * Pattern: [AP|IM][6-8 digits][letter][optional digit(s)]
+ * Pattern: [AP|PA|IM][6-8 digits][letter][optional digit(s)]
  */
 
 import { readFile } from 'fs/promises';
 import Anthropic from '@anthropic-ai/sdk';
 
-const OCR_RESPONSE_REGEX = /^((?:AP|IM)\d{6,12})([A-Z]\d*)?$/i;
+const OCR_RESPONSE_REGEX = /^((?:AP|PA|IM)\d{6,12})([A-Z]\d*)?$/i;
 
 // Abbreviated format: digits_digits + optional suffix (e.g., 26_388A, 26_388B2)
 // The underscore replaces suppressed zeros: 26_388 → 26000388
@@ -104,12 +105,12 @@ export async function ocrLabel(imagePath) {
             text: `This is a photo of a pathology slide label. Extract the case identifier.
 
 The label may contain:
-- A PRINTED case number starting with AP (Anatomopatológico) or IM (Imuno-histoquímico), followed by 6-8 digits.
+- A PRINTED case number starting with AP or PA (Anatomopatológico) or IM (Imuno-histoquímico), followed by 6-8 digits.
 - A HANDWRITTEN suffix indicating flask (A, B, C...) and optionally slide number (1, 2, 3...).
 - Sometimes the label is ABBREVIATED with handwriting: "26_388A" means AP26000388A (zeros suppressed with underscore).
 
 Examples of identifiers you may see:
-  Full: AP26000388A1, AP26000388B, IM26000100A2
+  Full: AP26000388A1, AP26000388B, PA26000019, IM26000100A2
   Abbreviated: 26_388A, 26_388B2, 26_100A (write exactly as seen, e.g. "26_388A")
 
 Ignore any other text on the label such as patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.

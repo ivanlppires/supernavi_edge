@@ -63,6 +63,24 @@ describe('parseOcrResponse', () => {
     });
   });
 
+  it('parses PA prefix response', () => {
+    const result = parseOcrResponse('PA26000019');
+    assert.deepStrictEqual(result, {
+      fullName: 'PA26000019',
+      caseBase: 'PA26000019',
+      slideLabel: '',
+    });
+  });
+
+  it('parses PA prefix with suffix', () => {
+    const result = parseOcrResponse('PA26000019A1');
+    assert.deepStrictEqual(result, {
+      fullName: 'PA26000019A1',
+      caseBase: 'PA26000019',
+      slideLabel: 'A1',
+    });
+  });
+
   // Abbreviated format tests (lab convention: underscore suppresses zeros)
   it('expands abbreviated 26_388A to AP26000388A', () => {
     const result = parseOcrResponse('26_388A');
