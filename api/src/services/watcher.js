@@ -155,13 +155,11 @@ async function processFile(filePath) {
     const rawFileName = `${slideId}_${originalName}`;
     const rawPath = join(RAW_DIR, rawFileName);
 
-    // Skip if raw file already exists with correct size (re-scan after failed inbox unlink)
+    // Skip if raw file already exists with correct size (re-scan)
     try {
       const existingRaw = await stat(rawPath);
       if (existingRaw.size === srcSize) {
         console.log(`[ingest] Raw already exists with correct size, skipping: ${rawFileName}`);
-        // Try to clean inbox copy
-        await unlink(filePath).catch(() => {});
         return;
       }
       // Exists but wrong size - overwrite
@@ -212,15 +210,6 @@ async function processFile(filePath) {
     });
 
     console.log(`[ingest] P0 enqueued for ${slideId.substring(0, 12)}... (${originalName}) [${format}]`);
-
-    // ── Step 4: remove from inbox (best-effort, non-fatal) ──
-    try {
-      await unlink(filePath);
-      console.log(`[ingest] Removed from inbox: ${originalName}`);
-    } catch (unlinkErr) {
-      // Non-fatal: file stays in inbox, will be skipped on next scan (same slideId)
-      console.warn(`[ingest] Could not remove from inbox (non-fatal): ${originalName} - ${unlinkErr.message}`);
-    }
 
     // Emit SSE event for slide import
     eventBus.emitSlideImport(slideId, originalName, format);
