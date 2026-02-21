@@ -295,11 +295,6 @@ async function processJob(job) {
 
         console.log(`TILEGEN complete for ${job.slideId.substring(0, 12)}: ${result.tileCount} tiles in ${result.elapsed}ms`);
 
-        // Background: persist hot tiles to bind-mount storage (non-blocking)
-        persistTilesBackground(job.slideId).catch(err => {
-          console.error(`[PERSIST] Failed for ${job.slideId.substring(0, 12)}: ${err.message}`);
-        });
-
         // Emit SlideRegistered outbox event now that tiles are fully ready
         try {
           const slideRow = await getPool().query(
@@ -333,6 +328,7 @@ async function processJob(job) {
         await updateSlide(job.slideId, { status: 'ready' });
 
         // Cloud upload: send full tile pyramid to Wasabi and notify cloud
+        // IMPORTANT: Must complete BEFORE persistTilesBackground, which deletes hot tiles
         if (process.env.CLOUD_UPLOAD_ENABLED === 'true') {
           try {
             await updateSlide(job.slideId, { cloud_upload_status: 'uploading' });
@@ -381,6 +377,12 @@ async function processJob(job) {
             console.error(`[UPLOAD] Failed for ${job.slideId.substring(0, 12)} (non-fatal): ${uploadErr.message}`);
           }
         }
+
+        // Persist hot tiles to bind-mount storage AFTER cloud upload completes.
+        // This must run after upload because persist deletes the hot tiles (tmpfs).
+        persistTilesBackground(job.slideId).catch(err => {
+          console.error(`[PERSIST] Failed for ${job.slideId.substring(0, 12)}: ${err.message}`);
+        });
       } catch (tilegenErr) {
         console.error(`TILEGEN failed for ${job.slideId.substring(0, 12)}: ${tilegenErr.message}`);
         await updateSlide(job.slideId, { tilegen_status: 'failed' });
