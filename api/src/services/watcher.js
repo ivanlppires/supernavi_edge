@@ -201,6 +201,11 @@ async function processFile(filePath) {
       type: 'P0'
     });
 
+    if (!job) {
+      console.log(`[ingest] P0 already active for ${slideId.substring(0, 12)}, skipping`);
+      return;
+    }
+
     await enqueueJob({
       jobId: job.id,
       slideId: slideId,

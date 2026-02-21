@@ -67,6 +67,16 @@ export async function findSlideByFilename(filename) {
 }
 
 export async function createJob({ slideId, type }) {
+  // Skip if an active job (queued or running) already exists for this slide+type
+  const existing = await query(
+    `SELECT id FROM jobs WHERE slide_id = $1 AND type = $2 AND status IN ('queued', 'running') LIMIT 1`,
+    [slideId, type]
+  );
+  if (existing.rows.length > 0) {
+    console.log(`[jobs] Skipping duplicate ${type} for ${slideId.substring(0, 12)} (existing: ${existing.rows[0].id})`);
+    return null;
+  }
+
   const result = await query(
     `INSERT INTO jobs (slide_id, type, status)
      VALUES ($1, $2, 'queued')

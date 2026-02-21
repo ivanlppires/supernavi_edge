@@ -91,6 +91,16 @@ async function enqueueJob(jobData) {
 }
 
 async function createJob(slideId, type) {
+  // Skip if an active job (queued or running) already exists
+  const existing = await getPool().query(
+    `SELECT id FROM jobs WHERE slide_id = $1 AND type = $2 AND status IN ('queued', 'running') LIMIT 1`,
+    [slideId, type]
+  );
+  if (existing.rows.length > 0) {
+    console.log(`[worker] Skipping duplicate ${type} for ${slideId.substring(0, 12)} (existing: ${existing.rows[0].id})`);
+    return null;
+  }
+
   const result = await getPool().query(
     `INSERT INTO jobs (slide_id, type, status) VALUES ($1, $2, 'queued') RETURNING id`,
     [slideId, type]
@@ -136,6 +146,26 @@ async function processP1(job) {
 async function processJob(job) {
   const format = job.format || 'unknown';
   console.log(`Processing job: ${job.type} for slide ${job.slideId.substring(0, 12)}... [${format}]`);
+
+  // Guard: skip if slide already past this stage
+  try {
+    const slideCheck = await getPool().query('SELECT status, tilegen_status FROM slides WHERE id = $1', [job.slideId]);
+    const s = slideCheck.rows[0];
+    if (s) {
+      if (job.type === 'P0' && s.status !== 'queued') {
+        console.log(`[worker] Skipping P0 for ${job.slideId.substring(0, 12)}: status already ${s.status}`);
+        await updateJob(job.jobId, { status: 'done' });
+        return;
+      }
+      if (job.type === 'TILEGEN' && s.tilegen_status === 'done') {
+        console.log(`[worker] Skipping TILEGEN for ${job.slideId.substring(0, 12)}: already done`);
+        await updateJob(job.jobId, { status: 'done' });
+        return;
+      }
+    }
+  } catch (checkErr) {
+    console.warn(`[worker] Status check failed (non-fatal): ${checkErr.message}`);
+  }
 
   // Guard: verify raw file exists before processing
   if (job.rawPath && ['P0', 'P1', 'TILEGEN'].includes(job.type)) {
@@ -192,16 +222,18 @@ async function processJob(job) {
       // WSI formats generate all levels at once with vips dzsave
       if (!isWSIFormat(format) && result.maxLevel > result.p0MaxLevel) {
         const p1JobId = await createJob(job.slideId, 'P1');
-        await enqueueJob({
-          jobId: p1JobId,
-          slideId: job.slideId,
-          type: 'P1',
-          rawPath: job.rawPath,
-          format: format,
-          startLevel: result.p0MaxLevel + 1,
-          maxLevel: result.maxLevel
-        });
-        console.log(`Enqueued P1 job for levels ${result.p0MaxLevel + 1}-${result.maxLevel}`);
+        if (p1JobId) {
+          await enqueueJob({
+            jobId: p1JobId,
+            slideId: job.slideId,
+            type: 'P1',
+            rawPath: job.rawPath,
+            format: format,
+            startLevel: result.p0MaxLevel + 1,
+            maxLevel: result.maxLevel
+          });
+          console.log(`Enqueued P1 job for levels ${result.p0MaxLevel + 1}-${result.maxLevel}`);
+        }
       }
 
       console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
@@ -213,16 +245,18 @@ async function processJob(job) {
       if (isWSIFormat(format)) {
         try {
           const tilegenJobId = await createJob(job.slideId, 'TILEGEN');
-          await updateSlide(job.slideId, { tilegen_status: 'queued' });
-          await enqueueJob({
-            jobId: tilegenJobId,
-            slideId: job.slideId,
-            type: 'TILEGEN',
-            rawPath: job.rawPath,
-            format: format,
-            maxLevel: result.maxLevel
-          });
-          console.log(`Enqueued TILEGEN job for ${job.slideId.substring(0, 12)}`);
+          if (tilegenJobId) {
+            await updateSlide(job.slideId, { tilegen_status: 'queued' });
+            await enqueueJob({
+              jobId: tilegenJobId,
+              slideId: job.slideId,
+              type: 'TILEGEN',
+              rawPath: job.rawPath,
+              format: format,
+              maxLevel: result.maxLevel
+            });
+            console.log(`Enqueued TILEGEN job for ${job.slideId.substring(0, 12)}`);
+          }
         } catch (tilegenErr) {
           console.error(`Failed to enqueue TILEGEN (non-fatal): ${tilegenErr.message}`);
         }

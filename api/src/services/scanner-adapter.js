@@ -188,6 +188,11 @@ async function processNewFile(filePath) {
 
   // --- Enqueue P0 processing ---
   const job = await createJob({ slideId, type: 'P0' });
+  if (!job) {
+    console.log(`[Scanner] P0 already active for ${slideId.substring(0, 12)}, skipping enqueue`);
+    return slideId;
+  }
+
   await enqueueJob({
     jobId: job.id,
     slideId,
