@@ -81,6 +81,15 @@ describe('parseOcrResponse', () => {
     });
   });
 
+  it('parses C (Citologia) prefix', () => {
+    const result = parseOcrResponse('C26000588A');
+    assert.deepStrictEqual(result, {
+      fullName: 'C26000588A',
+      caseBase: 'C26000588',
+      slideLabel: 'A',
+    });
+  });
+
   // Abbreviated format tests (lab convention: underscore suppresses zeros)
   it('expands abbreviated 26_388A to AP26000388A', () => {
     const result = parseOcrResponse('26_388A');
