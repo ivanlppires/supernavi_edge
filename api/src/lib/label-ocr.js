@@ -18,6 +18,10 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const OCR_RESPONSE_REGEX = /^((?:AP|IM)\d{6,12})([A-Z]\d*)?$/i;
 
+// Abbreviated format: digits_digits + optional suffix (e.g., 26_388A, 26_388B2)
+// The underscore replaces suppressed zeros: 26_388 → 26000388
+const ABBREVIATED_REGEX = /^(\d{2})[_](\d{1,6})([A-Z]\d*)?$/i;
+
 let client = null;
 
 function getClient() {
@@ -37,8 +41,27 @@ function getClient() {
 export function parseOcrResponse(text) {
   if (!text || typeof text !== 'string') return null;
 
-  // Normalize: trim, remove separators, uppercase
-  const cleaned = text.trim().replace(/[\s\-_.]/g, '').toUpperCase();
+  const trimmed = text.trim().toUpperCase();
+  if (!trimmed) return null;
+
+  // First try abbreviated format: 26_388A → AP26000388A
+  // Lab convention: underscore replaces suppressed zeros, default prefix is AP
+  const abbrMatch = trimmed.match(ABBREVIATED_REGEX);
+  if (abbrMatch) {
+    const prefix = 'AP'; // default to AP unless explicitly IM
+    const left = abbrMatch[1];                     // e.g., "26"
+    const right = abbrMatch[2];                    // e.g., "388"
+    const suffix = (abbrMatch[3] || '').toUpperCase(); // e.g., "A"
+    // Pad with zeros between left and right to reach 8 digits total
+    const totalDigits = 8;
+    const zerosNeeded = totalDigits - left.length - right.length;
+    const caseBase = prefix + left + '0'.repeat(Math.max(0, zerosNeeded)) + right;
+    const fullName = caseBase + suffix;
+    return { fullName, caseBase, slideLabel: suffix };
+  }
+
+  // Standard format: AP26000388A1 or IM26000100B2
+  const cleaned = trimmed.replace(/[\s\-_.]/g, '');
   if (!cleaned) return null;
 
   const match = cleaned.match(OCR_RESPONSE_REGEX);
@@ -78,15 +101,20 @@ export async function ocrLabel(imagePath) {
           },
           {
             type: 'text',
-            text: `This is a photo of a pathology slide label. Extract the complete case identifier.
+            text: `This is a photo of a pathology slide label. Extract the case identifier.
 
-The label contains:
+The label may contain:
 - A PRINTED case number starting with AP (Anatomopatológico) or IM (Imuno-histoquímico), followed by 6-8 digits.
-- A HANDWRITTEN suffix indicating flask (A, B, C...) and optionally slide number within the flask (1, 2, 3...).
+- A HANDWRITTEN suffix indicating flask (A, B, C...) and optionally slide number (1, 2, 3...).
+- Sometimes the label is ABBREVIATED with handwriting: "26_388A" means AP26000388A (zeros suppressed with underscore).
 
-Examples of complete identifiers: AP26000388A1, AP26000388B, IM26000100A2
+Examples of identifiers you may see:
+  Full: AP26000388A1, AP26000388B, IM26000100A2
+  Abbreviated: 26_388A, 26_388B2, 26_100A (write exactly as seen, e.g. "26_388A")
 
-Reply with ONLY the complete identifier (e.g., AP26000388A1). No other text.
+Ignore any other text on the label such as patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.
+
+Reply with ONLY the identifier as you read it (e.g., "AP26000388A1" or "26_388A"). No other text.
 If you cannot read the label, reply with UNREADABLE.`,
           },
         ],

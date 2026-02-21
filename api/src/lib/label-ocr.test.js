@@ -62,4 +62,50 @@ describe('parseOcrResponse', () => {
       slideLabel: 'A1',
     });
   });
+
+  // Abbreviated format tests (lab convention: underscore suppresses zeros)
+  it('expands abbreviated 26_388A to AP26000388A', () => {
+    const result = parseOcrResponse('26_388A');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000388A',
+      caseBase: 'AP26000388',
+      slideLabel: 'A',
+    });
+  });
+
+  it('expands abbreviated 26_388B2 to AP26000388B2', () => {
+    const result = parseOcrResponse('26_388B2');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000388B2',
+      caseBase: 'AP26000388',
+      slideLabel: 'B2',
+    });
+  });
+
+  it('expands abbreviated 26_100A to AP26000100A', () => {
+    const result = parseOcrResponse('26_100A');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000100A',
+      caseBase: 'AP26000100',
+      slideLabel: 'A',
+    });
+  });
+
+  it('expands abbreviated without suffix 26_388 to AP26000388', () => {
+    const result = parseOcrResponse('26_388');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000388',
+      caseBase: 'AP26000388',
+      slideLabel: '',
+    });
+  });
+
+  it('handles abbreviated lowercase 26_388a', () => {
+    const result = parseOcrResponse('26_388a');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000388A',
+      caseBase: 'AP26000388',
+      slideLabel: 'A',
+    });
+  });
 });

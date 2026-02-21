@@ -343,6 +343,41 @@ export function createRemoteManifest(localManifest, slideId, maxPreviewLevel, re
 }
 
 /**
+ * Upload manifest with ORIGINAL slide dimensions, overwriting the rebased preview manifest.
+ * Called after TILEGEN + cloud upload completes so the cloud viewer uses full resolution.
+ *
+ * @param {object} localManifest - Original local manifest (with real width/height/levelMax)
+ * @param {string} slideId - Slide identifier
+ * @returns {Promise<{success: boolean, key: string, bytes: number}>}
+ */
+export async function uploadFullManifest(localManifest, slideId) {
+  const manifest = {
+    protocol: 'dzi',
+    width: localManifest.width,
+    height: localManifest.height,
+    tileSize: localManifest.tileSize || 256,
+    overlap: localManifest.overlap || 0,
+    format: localManifest.format || 'jpg',
+    levelMin: 0,
+    levelMax: localManifest.levelMax,
+    storage: {
+      provider: 's3',
+      bucket: config.bucket,
+      region: config.region,
+      endpoint: config.endpoint,
+      prefix: `${config.prefixBase}/${slideId}/`
+    },
+    tilesPrefix: `${config.prefixBase}/${slideId}/tiles/`,
+    tilePathPattern: 'tiles/{z}/{x}_{y}.jpg',
+    tileUrlTemplate: `${config.endpoint}/${config.bucket}/${config.prefixBase}/${slideId}/tiles/{z}/{x}_{y}.jpg`,
+    onDemand: false,
+    fullTilesReady: true
+  };
+  const key = `${config.prefixBase}/${slideId}/manifest.json`;
+  return uploadJson(manifest, key);
+}
+
+/**
  * Upload rebased preview tiles for levels 0..maxLevel
  * These are in the preview_tiles/ subdirectory, not tiles/
  *

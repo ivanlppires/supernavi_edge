@@ -1,17 +1,19 @@
 import { createClient } from 'redis';
 import pg from 'pg';
-import { stat } from 'fs/promises';
+import { stat, readFile } from 'fs/promises';
+import { join } from 'path';
 import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
 import { processSVS_P0, processSVS_P1, generateFullTilePyramid, persistTilesBackground } from './pipeline-svs.js';
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
-import { deleteSlidePreview } from './preview/wasabiUploader.js';
+import { deleteSlidePreview, uploadFullManifest, getConfig as getWasabiConfig, getSlidePrefix } from './preview/wasabiUploader.js';
 import { uploadSlideToCloud } from './cloud-uploader.js';
 
 const { Pool } = pg;
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
 const databaseUrl = process.env.DATABASE_URL || 'postgres://supernavi:supernavi@localhost:5432/supernavi';
+const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 
 let redis = null;
 let pool = null;
@@ -366,6 +368,58 @@ async function processJob(job) {
               });
 
               console.log(`[UPLOAD] Result for ${job.slideId.substring(0, 12)}: ${uploadResult.status} (${uploadResult.mode || 'unknown'} mode, ${((uploadResult.elapsed || 0) / 1000).toFixed(1)}s)`);
+
+              // Emit updated preview:published event pointing to full tiles
+              try {
+                const s3Prefix = uploadResult.s3Prefix;
+                if (s3Prefix) {
+                  const wCfg = getWasabiConfig();
+                  const slideRow2 = await getPool().query(
+                    'SELECT original_filename, width, height, mpp, max_level, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+                    [job.slideId]
+                  );
+                  const s = slideRow2.rows[0];
+                  if (s) {
+                    await getPool().query(
+                      `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+                       VALUES ($1, $2, $3, $4)`,
+                      ['preview', `preview:${job.slideId}`, 'published', JSON.stringify({
+                        slide_id: job.slideId,
+                        case_id: null,
+                        external_case_id: s.external_case_id || null,
+                        external_case_base: s.external_case_base || null,
+                        external_slide_label: s.external_slide_label || null,
+                        wasabi_bucket: wCfg.bucket,
+                        wasabi_region: wCfg.region,
+                        wasabi_endpoint: wCfg.endpoint,
+                        wasabi_prefix: getSlidePrefix(job.slideId),
+                        thumb_key: `${wCfg.prefixBase}/${job.slideId}/thumb.jpg`,
+                        manifest_key: `${wCfg.prefixBase}/${job.slideId}/manifest.json`,
+                        tiles_prefix: s3Prefix,
+                        low_tiles_prefix: `${wCfg.prefixBase}/${job.slideId}/tiles/`,
+                        max_preview_level: s.max_level,
+                        preview_width: s.width,
+                        preview_height: s.height,
+                        original_width: s.width,
+                        original_height: s.height,
+                        tile_size: 256,
+                        format: 'jpg',
+                        full_tiles_ready: true,
+                        published_at: new Date().toISOString(),
+                      })]
+                    );
+                    console.log(`[UPLOAD] Emitted full preview:published event for ${job.slideId.substring(0, 12)} (tiles_prefix: ${s3Prefix})`);
+                  }
+                }
+
+                // Also update S3 manifest with original dimensions
+                const manifestPath = join(DERIVED_DIR, job.slideId, 'manifest.json');
+                const localManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+                await uploadFullManifest(localManifest, job.slideId);
+                console.log(`[UPLOAD] Preview manifest updated with original dimensions for ${job.slideId.substring(0, 12)}`);
+              } catch (manifestErr) {
+                console.error(`[UPLOAD] Failed to emit full preview event (non-fatal): ${manifestErr.message}`);
+              }
             }
           } catch (uploadErr) {
             await updateSlide(job.slideId, { cloud_upload_status: 'failed' }).catch(() => {});

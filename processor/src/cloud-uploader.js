@@ -300,7 +300,7 @@ export async function uploadSlideToCloud(slideId, slideMetadata) {
 
   if (alreadyReady) {
     console.log(`[UPLOAD] Slide ${slideId.substring(0, 12)} already READY, skipping upload`);
-    return { status: 'ALREADY_READY' };
+    return { status: 'ALREADY_READY', s3Prefix };
   }
 
   const useTarMode = (supportedUploadModes || []).includes('tar');
@@ -380,5 +380,5 @@ export async function uploadSlideToCloud(slideId, slideMetadata) {
   const elapsed = Date.now() - uploadStart;
   console.log(`[UPLOAD] Complete for ${slideId.substring(0, 12)}: ${tileCount} tiles in ${(elapsed / 1000).toFixed(1)}s (${uploadMode} mode)`);
 
-  return { status: 'READY', mode: uploadMode, tileCount, elapsed };
+  return { status: 'READY', mode: uploadMode, tileCount, elapsed, s3Prefix };
 }
