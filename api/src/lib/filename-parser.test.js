@@ -43,6 +43,36 @@ describe('parsePathologyFilename', () => {
     });
   });
 
+  it('normalizes PA prefix to AP', () => {
+    const result = parsePathologyFilename('PA26000019.svs');
+    assert.deepStrictEqual(result, {
+      caseBase: 'AP26000019',
+      label: '1',
+      externalCaseId: 'pathoweb:AP26000019',
+      externalCaseBase: 'AP26000019',
+    });
+  });
+
+  it('normalizes PA prefix with suffix to AP', () => {
+    const result = parsePathologyFilename('PA26000019A2.svs');
+    assert.deepStrictEqual(result, {
+      caseBase: 'AP26000019',
+      label: 'A2',
+      externalCaseId: 'pathoweb:AP26000019',
+      externalCaseBase: 'AP26000019',
+    });
+  });
+
+  it('normalizes PA prefix with separators', () => {
+    const result = parsePathologyFilename('PA-26000019-A1.tiff');
+    assert.deepStrictEqual(result, {
+      caseBase: 'AP26000019',
+      label: 'A1',
+      externalCaseId: 'pathoweb:AP26000019',
+      externalCaseBase: 'AP26000019',
+    });
+  });
+
   it('returns null for unrecognized filenames', () => {
     assert.strictEqual(parsePathologyFilename('random_file.svs'), null);
     assert.strictEqual(parsePathologyFilename('09443_20260219090407.svs'), null);
