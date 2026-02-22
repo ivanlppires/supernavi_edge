@@ -10,6 +10,7 @@ import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import { mkdir, writeFile, unlink, access, readdir, rename } from 'fs/promises';
 import { join, basename } from 'path';
+import sharp from 'sharp';
 
 const execAsync = promisify(exec);
 
@@ -109,16 +110,126 @@ function calculateMaxLevel(width, height) {
 }
 
 /**
- * Generate thumbnail using vips
+ * Generate thumbnail using tissue-density detection.
+ *
+ * 1. Create a small overview of the slide (~1600px wide, no crop)
+ * 2. Build an integral image of tissue pixels (grayscale < threshold)
+ * 3. Slide a window across the overview to find the densest tissue region
+ * 4. Extract that region at higher resolution and resize to 640x400
+ *
+ * Falls back to vips attention crop if the smart path fails.
  */
 async function generateThumbnail(rawPath, outputPath) {
-  // Generate a 640x400 (16:10) thumbnail using attention crop.
-  // "attention" uses entropy detection to find the region with most tissue,
-  // avoiding blank white areas on elongated slides (e.g. 27900x168662).
-  await execAsync(
-    `vips thumbnail "${rawPath}" "${outputPath}" 640 --height 400 --crop attention`
-  );
+  try {
+    await generateSmartThumbnail(rawPath, outputPath);
+  } catch (err) {
+    console.warn(`[thumb] Smart thumbnail failed, falling back to attention crop: ${err.message}`);
+    await execAsync(
+      `vips thumbnail "${rawPath}" "${outputPath}" 640 --height 400 --crop attention`
+    );
+  }
   console.log(`Generated thumbnail: ${outputPath}`);
+}
+
+async function generateSmartThumbnail(rawPath, outputPath) {
+  const THUMB_W = 640;
+  const THUMB_H = 400;
+  const THRESHOLD = 220; // pixels darker than this are "tissue"
+
+  // Step 1: Create a small overview (fit within ~1600px, no crop)
+  const overviewPath = outputPath + '.overview.jpg';
+  await execAsync(
+    `vips thumbnail "${rawPath}" "${overviewPath}" 1600 --no-rotate`
+  );
+  const overviewBuf = await sharp(overviewPath).toBuffer();
+  const meta = await sharp(overviewBuf).metadata();
+  const W = meta.width;
+  const H = meta.height;
+
+  // If the overview already fits in 640x400, just use attention crop
+  if (W <= THUMB_W * 1.2 && H <= THUMB_H * 1.2) {
+    await unlink(overviewPath).catch(() => {});
+    await execAsync(
+      `vips thumbnail "${rawPath}" "${outputPath}" ${THUMB_W} --height ${THUMB_H} --crop attention`
+    );
+    return;
+  }
+
+  // Step 2: Get grayscale pixels for tissue detection
+  const { data, info } = await sharp(overviewBuf)
+    .grayscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  // Step 3: Build integral image of tissue mask
+  const iW = info.width;
+  const iH = info.height;
+  const integral = new Int32Array((iW + 1) * (iH + 1));
+  const stride = iW + 1;
+
+  for (let y = 1; y <= iH; y++) {
+    for (let x = 1; x <= iW; x++) {
+      const tissue = data[(y - 1) * iW + (x - 1)] < THRESHOLD ? 1 : 0;
+      integral[y * stride + x] =
+        tissue +
+        integral[(y - 1) * stride + x] +
+        integral[y * stride + (x - 1)] -
+        integral[(y - 1) * stride + (x - 1)];
+    }
+  }
+
+  function rectSum(x1, y1, x2, y2) {
+    return (
+      integral[y2 * stride + x2] -
+      integral[y1 * stride + x2] -
+      integral[y2 * stride + x1] +
+      integral[y1 * stride + x1]
+    );
+  }
+
+  // Step 4: Slide a window to find the densest tissue region
+  // Window aspect ratio matches the thumb (640:400 = 8:5)
+  // Size ~half the overview so we get good zoom into tissue
+  const winW = Math.min(Math.round(iW * 0.5), iW);
+  const winH = Math.round(winW * (THUMB_H / THUMB_W));
+  const effWinH = Math.min(winH, iH);
+  const effWinW = Math.min(winW, iW);
+  const step = Math.max(1, Math.round(Math.min(effWinW, effWinH) / 20));
+
+  let bestScore = -1, bestX = 0, bestY = 0;
+  const maxX = iW - effWinW;
+  const maxY = iH - effWinH;
+
+  for (let y = 0; y <= maxY; y += step) {
+    for (let x = 0; x <= maxX; x += step) {
+      const score = rectSum(x, y, x + effWinW, y + effWinH);
+      if (score > bestScore) {
+        bestScore = score;
+        bestX = x;
+        bestY = y;
+      }
+    }
+  }
+
+  // If no tissue found at all, fall back to attention crop
+  if (bestScore <= 0) {
+    await unlink(overviewPath).catch(() => {});
+    await execAsync(
+      `vips thumbnail "${rawPath}" "${outputPath}" ${THUMB_W} --height ${THUMB_H} --crop attention`
+    );
+    return;
+  }
+
+  // Step 5: Extract the densest region from the overview and resize to thumb
+  await sharp(overviewBuf)
+    .extract({ left: bestX, top: bestY, width: effWinW, height: effWinH })
+    .resize(THUMB_W, THUMB_H, { fit: 'cover' })
+    .flatten({ background: { r: 255, g: 255, b: 255 } })
+    .jpeg({ quality: 85 })
+    .toFile(outputPath);
+
+  // Clean up temp overview
+  await unlink(overviewPath).catch(() => {});
 }
 
 /**
