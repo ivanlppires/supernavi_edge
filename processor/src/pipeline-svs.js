@@ -112,11 +112,11 @@ function calculateMaxLevel(width, height) {
  * Generate thumbnail using vips
  */
 async function generateThumbnail(rawPath, outputPath) {
-  // Generate a 640x400 (16:10) centre-cropped thumbnail.
-  // This matches the dashboard card aspect ratio and avoids low-res
-  // stretched thumbnails for elongated slides (e.g. 100000x20000).
+  // Generate a 640x400 (16:10) thumbnail using attention crop.
+  // "attention" uses entropy detection to find the region with most tissue,
+  // avoiding blank white areas on elongated slides (e.g. 27900x168662).
   await execAsync(
-    `vips thumbnail "${rawPath}" "${outputPath}" 640 --height 400 --crop centre`
+    `vips thumbnail "${rawPath}" "${outputPath}" 640 --height 400 --crop attention`
   );
   console.log(`Generated thumbnail: ${outputPath}`);
 }
