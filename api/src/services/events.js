@@ -8,9 +8,6 @@
  * - tile:pending - Tile generation started
  *
  * Collaboration Events:
- * - case.created - New case created
- * - case.slide_linked - Slide linked to case
- * - case.slide_unlinked - Slide unlinked from case
  * - annotation.created - New annotation created
  * - annotation.updated - Annotation updated
  * - annotation.deleted - Annotation soft deleted
