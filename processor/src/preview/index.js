@@ -19,24 +19,10 @@ export {
   getRebasedConfig
 } from './rebasedPreview.js';
 export {
-  uploadFile,
-  uploadJson,
-  uploadThumb,
-  uploadManifest,
-  uploadTile,
-  uploadTilesForLevels,
-  uploadRebasedTiles,
+  uploadPreviewAssets,
   createRemoteManifest,
   getSlidePrefix,
   getConfig,
   hashFile,
   hashContent
 } from './wasabiUploader.js';
-export {
-  verifyLocalTiles,
-  verifyRemoteTiles,
-  verifySampleTilesHEAD,
-  compareLocalRemote,
-  runFullIntegrityCheck,
-  calculateExpectedTiles
-} from './integrityCheck.js';

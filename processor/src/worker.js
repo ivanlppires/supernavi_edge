@@ -6,7 +6,7 @@ import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
 import { processSVS_P0, processSVS_P1, generateFullTilePyramid, persistTilesBackground } from './pipeline-svs.js';
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
-import { deleteSlidePreview, uploadFullManifest, getConfig as getWasabiConfig, getSlidePrefix } from './preview/wasabiUploader.js';
+import { getConfig as getWasabiConfig, getSlidePrefix } from './preview/wasabiUploader.js';
 import { uploadSlideToCloud } from './cloud-uploader.js';
 
 const { Pool } = pg;
@@ -288,15 +288,22 @@ async function processJob(job) {
       await updateJob(job.jobId, { status: 'done' });
       console.log(`P1 complete for ${job.slideId.substring(0, 12)}, levelReadyMax=${result.levelReadyMax}`);
     } else if (job.type === 'CLEANUP') {
-      // Delete preview from Wasabi S3
-      console.log(`Cleaning up Wasabi preview for ${job.slideId.substring(0, 12)}...`);
+      // Request cloud to delete preview from Wasabi S3
+      console.log(`Requesting cloud cleanup for ${job.slideId.substring(0, 12)}...`);
       try {
-        const result = await deleteSlidePreview(job.slideId);
-        console.log(`Cleanup complete: ${result.deleted} objects deleted, ${result.errors} errors`);
+        const CLOUD_API_URL = process.env.CLOUD_API_URL || 'http://localhost:3001';
+        const EDGE_KEY = process.env.EDGE_KEY || '';
+        const res = await fetch(`${CLOUD_API_URL}/edge/slides/${job.slideId}/cleanup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-EDGE-KEY': EDGE_KEY },
+        });
+        if (!res.ok) {
+          throw new Error(`Cloud cleanup failed: ${res.status} ${await res.text()}`);
+        }
+        const result = await res.json();
+        console.log(`Cleanup requested: ${JSON.stringify(result)}`);
         await publishEvent('cleanup:complete', {
           slideId: job.slideId,
-          deleted: result.deleted,
-          errors: result.errors,
           timestamp: Date.now()
         });
       } catch (cleanupErr) {
@@ -446,11 +453,7 @@ async function processJob(job) {
                   }
                 }
 
-                // Also update S3 manifest with original dimensions
-                const manifestPath = join(DERIVED_DIR, job.slideId, 'manifest.json');
-                const localManifest = JSON.parse(await readFile(manifestPath, 'utf8'));
-                await uploadFullManifest(localManifest, job.slideId);
-                console.log(`[UPLOAD] Preview manifest updated with original dimensions for ${job.slideId.substring(0, 12)}`);
+
               } catch (manifestErr) {
                 console.error(`[UPLOAD] Failed to emit full preview event (non-fatal): ${manifestErr.message}`);
               }
