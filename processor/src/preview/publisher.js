@@ -23,9 +23,7 @@ import {
   getRebasedConfig
 } from './rebasedPreview.js';
 import {
-  uploadThumb,
-  uploadManifest,
-  uploadRebasedTiles,
+  uploadPreviewAssets,
   createRemoteManifest,
   getSlidePrefix,
   getConfig,
@@ -364,13 +362,8 @@ export async function publishRemotePreview(
       maxLevel = effectiveMaxLevel;
     }
 
-    // Step 2: Upload thumb
-    console.log(`\n  [Step 2] Uploading thumb.jpg...`);
-    const thumbResult = await uploadThumb(thumbPath, slideId);
-    console.log(`    Uploaded: ${thumbResult.key} (${thumbResult.bytes} bytes)`);
-
-    // Step 3: Create and upload remote manifest with REBASED dimensions
-    console.log(`\n  [Step 3] Uploading manifest.json (rebased)...`);
+    // Step 2: Upload all preview assets (thumb, manifest, tiles) via presigned URLs
+    console.log(`\n  [Step 2] Uploading preview assets via presigned URLs...`);
     const remoteManifest = createRemoteManifest(
       localManifest,
       slideId,
@@ -378,24 +371,21 @@ export async function publishRemotePreview(
       tileStats.rebasedWidth,
       tileStats.rebasedHeight
     );
-    const manifestResult = await uploadManifest(remoteManifest, slideId);
-    console.log(`    Uploaded: ${manifestResult.key} (${manifestResult.bytes} bytes)`);
-    console.log(`    Manifest width=${remoteManifest.width} height=${remoteManifest.height} levelMax=${remoteManifest.levelMax}`);
-
-    // Step 4: Upload rebased preview tiles
-    console.log(`\n  [Step 4] Uploading rebased tiles 0..${maxLevel}...`);
     const previewTilesDir = join(slideDir, 'preview_tiles');
-    const uploadStats = await uploadRebasedTiles(previewTilesDir, slideId, maxLevel);
-    console.log(`    Uploaded: ${uploadStats.totalTiles} tiles (${uploadStats.totalBytes} bytes)`);
+    const uploadStats = await uploadPreviewAssets(slideId, thumbPath, remoteManifest, previewTilesDir, maxLevel);
+    console.log(`    Uploaded: ${uploadStats.totalTiles} tiles, ${uploadStats.totalBytes} bytes total`);
+    if (uploadStats.errors.length > 0) {
+      console.warn(`    Upload errors: ${uploadStats.errors.length}`);
+    }
 
-    // Step 5: Compute final hashes for marker
+    // Step 3: Compute final hashes for marker
     const finalHashes = await computeContentHash(slideId, maxLevel, targetMaxDim);
 
-    // Step 6: Get case_id (if linked)
+    // Step 4: Get case_id (if linked)
     const caseId = await getCaseIdForSlide(slideId);
     console.log(`\n  Case ID: ${caseId || '(not linked)'}`);
 
-    // Step 7: Emit PreviewPublished event
+    // Step 5: Emit PreviewPublished event
     console.log(`\n  [Step 5] Emitting PreviewPublished event...`);
     const wasabiConfig = getConfig();
     const publishedAt = new Date().toISOString();
@@ -431,9 +421,9 @@ export async function publishRemotePreview(
       published_at: publishedAt,
       upload_stats: {
         tiles_count: uploadStats.totalTiles,
-        tiles_bytes: uploadStats.totalBytes,
-        thumb_bytes: thumbResult.bytes,
-        manifest_bytes: manifestResult.bytes,
+        tiles_bytes: uploadStats.totalBytes - uploadStats.thumbBytes - uploadStats.manifestBytes,
+        thumb_bytes: uploadStats.thumbBytes,
+        manifest_bytes: uploadStats.manifestBytes,
         tiles_generated: tileStats.generated,
         errors: uploadStats.errors?.length || 0
       }
@@ -449,7 +439,7 @@ export async function publishRemotePreview(
     });
     console.log(`    Event ID: ${outboxEvent.event_id}`);
 
-    // Step 8: Save success marker
+    // Step 6: Save success marker
     const successMarker = {
       status: 'complete',
       publishedAt,
@@ -463,7 +453,7 @@ export async function publishRemotePreview(
       eventId: outboxEvent.event_id,
       uploadStats: {
         tilesCount: uploadStats.totalTiles,
-        totalBytes: thumbResult.bytes + manifestResult.bytes + uploadStats.totalBytes
+        totalBytes: uploadStats.totalBytes
       }
     };
     await savePublicationMarker(slideId, successMarker);
