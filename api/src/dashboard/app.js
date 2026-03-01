@@ -1,0 +1,660 @@
+/**
+ * SuperNavi Edge Dashboard — app.js
+ *
+ * Single-page dashboard with 4 tabs: Status, Laminas, Atividade, Configuracoes.
+ * All dynamic content rendered via safe DOM methods (NO innerHTML with API data).
+ */
+
+(function () {
+  'use strict';
+
+  // ---- Constants ----
+  const MAX_ACTIVITY_EVENTS = 100;
+  const DASHBOARD_REFRESH_MS = 10_000;
+
+  // ---- State ----
+  let activityEvents = [];
+  let currentFilter = 'all';
+  let slidesData = [];
+  let eventSource = null;
+  let dashboardTimer = null;
+
+  // ---- DOM references (cached after DOMContentLoaded) ----
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
+
+  // =====================
+  //  Tab Navigation
+  // =====================
+  function initTabs() {
+    const tabBar = $('#tabBar');
+    tabBar.addEventListener('click', (e) => {
+      const btn = e.target.closest('.tab-btn');
+      if (!btn) return;
+      const tabId = btn.dataset.tab;
+
+      // Deactivate all
+      $$('.tab-btn').forEach((b) => b.classList.remove('active'));
+      $$('.tab-panel').forEach((p) => p.classList.remove('active'));
+
+      // Activate selected
+      btn.classList.add('active');
+      const panel = $(`#panel-${tabId}`);
+      if (panel) panel.classList.add('active');
+
+      // Lazy-load data for the activated tab
+      if (tabId === 'slides') fetchSlides();
+      if (tabId === 'settings') loadSettings();
+    });
+  }
+
+  // =====================
+  //  Utility: Relative Time in Portuguese
+  // =====================
+  function relativeTime(dateStr) {
+    if (!dateStr) return '';
+    const now = Date.now();
+    const then = new Date(dateStr).getTime();
+    const diffSec = Math.floor((now - then) / 1000);
+    if (diffSec < 0) return 'agora';
+    if (diffSec < 60) return 'agora';
+    const diffMin = Math.floor(diffSec / 60);
+    if (diffMin < 60) return `h\u00e1 ${diffMin} min`;
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `h\u00e1 ${diffHr}h`;
+    const diffDay = Math.floor(diffHr / 24);
+    if (diffDay === 1) return 'h\u00e1 1 dia';
+    return `h\u00e1 ${diffDay} dias`;
+  }
+
+  function formatTime(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  // =====================
+  //  Safe DOM helpers
+  // =====================
+  function el(tag, attrs, children) {
+    const node = document.createElement(tag);
+    if (attrs) {
+      for (const [k, v] of Object.entries(attrs)) {
+        if (k === 'className') node.className = v;
+        else if (k === 'textContent') node.textContent = v;
+        else node.setAttribute(k, v);
+      }
+    }
+    if (children) {
+      if (!Array.isArray(children)) children = [children];
+      for (const child of children) {
+        if (typeof child === 'string') {
+          node.appendChild(document.createTextNode(child));
+        } else if (child) {
+          node.appendChild(child);
+        }
+      }
+    }
+    return node;
+  }
+
+  function clearChildren(parent) {
+    while (parent.firstChild) parent.removeChild(parent.firstChild);
+  }
+
+  function setText(selector, text) {
+    const node = typeof selector === 'string' ? $(selector) : selector;
+    if (node) node.textContent = text;
+  }
+
+  function setDotClass(selector, stateClass) {
+    const dot = typeof selector === 'string' ? $(selector) : selector;
+    if (!dot) return;
+    dot.className = 'status-dot ' + stateClass;
+  }
+
+  // =====================
+  //  Tab 1: Status (Dashboard)
+  // =====================
+  async function fetchDashboard() {
+    try {
+      const res = await fetch('/v1/dashboard');
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      renderDashboard(data);
+    } catch (err) {
+      console.error('Dashboard fetch error:', err);
+    }
+  }
+
+  function renderDashboard(data) {
+    // Tunnel
+    if (data.tunnel) {
+      const connected = data.tunnel.connected;
+      setDotClass('#tunnelDot', connected ? 'connected' : 'disconnected');
+      setText('#tunnelStatusText', connected ? 'Conectado' : 'Desconectado');
+      setText('#tunnelAgent', 'Agent: ' + (data.tunnel.agentId || '--'));
+    }
+
+    // Watcher
+    if (data.watcher) {
+      const state = data.watcher.state;
+      let dotClass = 'disconnected';
+      let label = 'Parado';
+      if (state === 'running') { dotClass = 'connected'; label = 'Executando'; }
+      else if (state === 'needs_config') { dotClass = 'warning'; label = 'Precisa configurar'; }
+      else if (state === 'dir_inaccessible') { dotClass = 'warning'; label = 'Pasta inacess\u00edvel'; }
+      setDotClass('#watcherDot', dotClass);
+      setText('#watcherStatusText', label);
+      setText('#watcherDir', 'Pasta: ' + (data.watcher.ingestDir || data.config?.slidesDirHost || '--'));
+    }
+
+    // DB
+    if (data.slides) {
+      setText('#dbSlideCount', 'L\u00e2minas: ' + data.slides.total);
+    }
+
+    // Queue
+    if (data.jobs) {
+      setText('#queuePending', 'Pendentes: ' + data.jobs.pending);
+      setText('#queueRunning', 'Executando: ' + data.jobs.running);
+    }
+
+    // Processor
+    if (data.jobs) {
+      const processorBody = $('#processorBody');
+      clearChildren(processorBody);
+
+      if (data.jobs.active && data.jobs.active.length > 0) {
+        for (const job of data.jobs.active) {
+          const jobDiv = el('div', { className: 'active-job' });
+          const nameDiv = el('div', { className: 'active-job-name' });
+          nameDiv.textContent = job.original_filename || job.slide_id || '--';
+          const typeDiv = el('div', { className: 'active-job-type' });
+          typeDiv.textContent = job.type + ' - ' + job.status;
+          jobDiv.appendChild(nameDiv);
+          jobDiv.appendChild(typeDiv);
+          processorBody.appendChild(jobDiv);
+        }
+      } else {
+        const idleDiv = el('div', { className: 'card-detail' });
+        idleDiv.textContent = 'Ocioso';
+        processorBody.appendChild(idleDiv);
+      }
+    }
+
+    // Disk (slide counts by status)
+    if (data.slides) {
+      setText('#diskReady', 'Prontas: ' + data.slides.ready);
+      setText('#diskProcessing', 'Processando: ' + data.slides.processing);
+      setText('#diskQueued', 'Na fila: ' + data.slides.queued);
+      setText('#diskFailed', 'Com erro: ' + data.slides.failed);
+    }
+  }
+
+  function startDashboardPolling() {
+    fetchDashboard();
+    dashboardTimer = setInterval(fetchDashboard, DASHBOARD_REFRESH_MS);
+  }
+
+  // =====================
+  //  Tab 2: Slides
+  // =====================
+  async function fetchSlides() {
+    try {
+      const res = await fetch('/v1/slides');
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      slidesData = data.items || [];
+      renderSlides();
+    } catch (err) {
+      console.error('Slides fetch error:', err);
+    }
+  }
+
+  function renderSlides() {
+    const container = $('#slidesList');
+    const countEl = $('#slidesCount');
+    const emptyEl = $('#slidesEmpty');
+
+    // Filter
+    const filtered = currentFilter === 'all'
+      ? slidesData
+      : slidesData.filter((s) => s.status === currentFilter);
+
+    // Update count
+    const countText = filtered.length === 1
+      ? '1 l\u00e2mina'
+      : filtered.length + ' l\u00e2minas';
+    setText(countEl, countText);
+
+    // Clear existing cards (but keep the empty state element)
+    const existingCards = container.querySelectorAll('.slide-card');
+    existingCards.forEach((c) => c.remove());
+
+    if (filtered.length === 0) {
+      if (emptyEl) emptyEl.style.display = '';
+      return;
+    }
+
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    for (const slide of filtered) {
+      const card = buildSlideCard(slide);
+      container.appendChild(card);
+    }
+  }
+
+  function buildSlideCard(slide) {
+    const card = el('div', { className: 'slide-card' });
+    card.setAttribute('data-status', slide.status || 'queued');
+    card.setAttribute('data-slide-id', slide.slideId);
+
+    // Thumbnail
+    const thumb = el('img', { className: 'slide-thumb' });
+    thumb.setAttribute('src', '/v1/slides/' + encodeURIComponent(slide.slideId) + '/thumb');
+    thumb.setAttribute('alt', '');
+    thumb.setAttribute('loading', 'lazy');
+    thumb.addEventListener('error', function () {
+      // Replace broken image with SVG placeholder
+      const placeholder = el('div', { className: 'slide-thumb-placeholder' });
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('width', '24');
+      svg.setAttribute('height', '24');
+      svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke', 'currentColor');
+      svg.setAttribute('stroke-width', '1.5');
+      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+      rect.setAttribute('x', '3');
+      rect.setAttribute('y', '3');
+      rect.setAttribute('width', '18');
+      rect.setAttribute('height', '18');
+      rect.setAttribute('rx', '2');
+      rect.setAttribute('ry', '2');
+      const circ = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      circ.setAttribute('cx', '8.5');
+      circ.setAttribute('cy', '8.5');
+      circ.setAttribute('r', '1.5');
+      const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      poly.setAttribute('points', '21,15 16,10 5,21');
+      svg.appendChild(rect);
+      svg.appendChild(circ);
+      svg.appendChild(poly);
+      placeholder.appendChild(svg);
+      card.replaceChild(placeholder, thumb);
+    });
+    card.appendChild(thumb);
+
+    // Info section
+    const info = el('div', { className: 'slide-info' });
+    const filename = el('div', { className: 'slide-filename' });
+    filename.textContent = slide.originalFilename || '--';
+    info.appendChild(filename);
+
+    const meta = el('div', { className: 'slide-meta' });
+
+    // Format badge
+    const format = (slide.format || 'unknown').toUpperCase();
+    const formatBadge = el('span', { className: 'badge badge-format' });
+    formatBadge.textContent = format;
+    meta.appendChild(formatBadge);
+
+    // Dimensions
+    if (slide.width && slide.height) {
+      const dims = el('span', { className: 'slide-meta-item' });
+      dims.textContent = slide.width + ' \u00d7 ' + slide.height;
+      meta.appendChild(dims);
+    }
+
+    // Magnification
+    if (slide.appMag) {
+      const mag = el('span', { className: 'slide-meta-item' });
+      mag.textContent = slide.appMag + '\u00d7';
+      meta.appendChild(mag);
+    }
+
+    info.appendChild(meta);
+    card.appendChild(info);
+
+    // Right section: status + time
+    const right = el('div', { className: 'slide-right' });
+
+    const statusBadge = el('span', { className: 'badge badge-' + (slide.status || 'queued') });
+    statusBadge.textContent = statusLabel(slide.status);
+    right.appendChild(statusBadge);
+
+    const time = el('span', { className: 'slide-time' });
+    time.textContent = relativeTime(slide.createdAt);
+    right.appendChild(time);
+
+    card.appendChild(right);
+
+    return card;
+  }
+
+  function statusLabel(status) {
+    const labels = {
+      ready: 'Pronta',
+      processing: 'Processando',
+      queued: 'Na fila',
+      failed: 'Erro'
+    };
+    return labels[status] || status || '--';
+  }
+
+  function initSlideFilters() {
+    const filterBtns = $('#filterButtons');
+    filterBtns.addEventListener('click', (e) => {
+      const btn = e.target.closest('.filter-btn');
+      if (!btn) return;
+
+      $$('.filter-btn').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilter = btn.dataset.filter;
+      renderSlides();
+    });
+  }
+
+  // =====================
+  //  Tab 3: Activity Feed
+  // =====================
+  function addActivityEvent(eventType, data) {
+    const event = {
+      type: eventType,
+      data: data,
+      timestamp: new Date(),
+      message: eventToMessage(eventType, data)
+    };
+
+    activityEvents.unshift(event);
+    if (activityEvents.length > MAX_ACTIVITY_EVENTS) {
+      activityEvents.length = MAX_ACTIVITY_EVENTS;
+    }
+
+    renderActivityItem(event, true);
+    trimActivityFeed();
+  }
+
+  function eventToMessage(eventType, data) {
+    const filename = data && data.filename
+      ? data.filename
+      : data && data.original_filename
+        ? data.original_filename
+        : '';
+
+    switch (eventType) {
+      case 'slide:import':
+        return 'L\u00e2mina ' + filename + ' detectada na pasta';
+      case 'slide:ready':
+        return 'L\u00e2mina pronta para visualiza\u00e7\u00e3o';
+      case 'tile:pending': {
+        const z = data && data.z != null ? data.z : '?';
+        return 'Gerando tile n\u00edvel ' + z;
+      }
+      case 'tile:generated': {
+        const z2 = data && data.z != null ? data.z : '?';
+        return 'Tile gerado n\u00edvel ' + z2;
+      }
+      case 'connected':
+        return 'Conex\u00e3o SSE estabelecida';
+      default:
+        return eventType + (filename ? ': ' + filename : '');
+    }
+  }
+
+  function eventDotClass(eventType) {
+    if (eventType === 'slide:import') return 'import';
+    if (eventType === 'slide:ready') return 'ready';
+    if (eventType.startsWith('tile:')) return 'tile';
+    if (eventType === 'connected') return 'connection';
+    return 'default';
+  }
+
+  function renderActivityItem(event, prepend) {
+    const feed = $('#activityFeed');
+    const emptyEl = $('#activityEmpty');
+    if (emptyEl) emptyEl.style.display = 'none';
+
+    const item = el('div', { className: 'activity-item' });
+
+    const dot = el('span', { className: 'activity-dot ' + eventDotClass(event.type) });
+    item.appendChild(dot);
+
+    const content = el('div', { className: 'activity-content' });
+    const msg = el('div', { className: 'activity-message' });
+    msg.textContent = event.message;
+    content.appendChild(msg);
+    item.appendChild(content);
+
+    const time = el('span', { className: 'activity-time' });
+    time.textContent = formatTime(event.timestamp);
+    item.appendChild(time);
+
+    if (prepend) {
+      feed.insertBefore(item, feed.firstChild);
+    } else {
+      feed.appendChild(item);
+    }
+  }
+
+  function trimActivityFeed() {
+    const feed = $('#activityFeed');
+    const items = feed.querySelectorAll('.activity-item');
+    while (items.length > MAX_ACTIVITY_EVENTS) {
+      feed.removeChild(feed.lastElementChild);
+    }
+  }
+
+  function clearActivityFeed() {
+    activityEvents = [];
+    const feed = $('#activityFeed');
+    const items = feed.querySelectorAll('.activity-item');
+    items.forEach((item) => item.remove());
+    const emptyEl = $('#activityEmpty');
+    if (emptyEl) emptyEl.style.display = '';
+  }
+
+  function initActivityControls() {
+    const clearBtn = $('#clearActivity');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', clearActivityFeed);
+    }
+  }
+
+  // =====================
+  //  Tab 4: Settings
+  // =====================
+  async function loadSettings() {
+    try {
+      const res = await fetch('/v1/admin/config');
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      populateSettingsForm(data);
+    } catch (err) {
+      console.error('Settings fetch error:', err);
+    }
+  }
+
+  function populateSettingsForm(data) {
+    const cfg = data.config || {};
+
+    const slidesDir = $('#cfgSlidesDir');
+    if (slidesDir) slidesDir.value = cfg.slidesDirHost || '';
+
+    const scannerType = $('#cfgScannerType');
+    if (scannerType && cfg.scanner && cfg.scanner.type) {
+      scannerType.value = cfg.scanner.type;
+    }
+
+    const stableSeconds = $('#cfgStableSeconds');
+    const stableDisplay = $('#stableSecondsValue');
+    if (stableSeconds && cfg.stableSeconds != null) {
+      stableSeconds.value = cfg.stableSeconds;
+      if (stableDisplay) stableDisplay.textContent = cfg.stableSeconds;
+    }
+
+    const caseRegex = $('#cfgCaseRegex');
+    if (caseRegex) caseRegex.value = cfg.caseBaseRegex || '';
+  }
+
+  function initSettingsForm() {
+    // Range slider live display
+    const stableSeconds = $('#cfgStableSeconds');
+    const stableDisplay = $('#stableSecondsValue');
+    if (stableSeconds && stableDisplay) {
+      stableSeconds.addEventListener('input', () => {
+        stableDisplay.textContent = stableSeconds.value;
+      });
+    }
+
+    // Save button
+    const saveBtn = $('#saveConfig');
+    const saveStatus = $('#saveStatus');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        setText(saveStatus, 'Salvando...');
+        saveStatus.className = 'save-status';
+
+        const payload = {
+          slidesDirHost: ($('#cfgSlidesDir') || {}).value || '',
+          scanner: {
+            type: ($('#cfgScannerType') || {}).value || 'unknown'
+          },
+          stableSeconds: parseInt(($('#cfgStableSeconds') || {}).value, 10) || 10,
+          caseBaseRegex: ($('#cfgCaseRegex') || {}).value || ''
+        };
+
+        try {
+          const res = await fetch('/v1/admin/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            throw new Error(errBody.error || res.statusText);
+          }
+
+          const result = await res.json();
+          setText(saveStatus, result.message || 'Salvo com sucesso!');
+          saveStatus.className = 'save-status success';
+        } catch (err) {
+          setText(saveStatus, 'Erro: ' + err.message);
+          saveStatus.className = 'save-status error';
+        } finally {
+          saveBtn.disabled = false;
+          // Clear status after 5 seconds
+          setTimeout(() => {
+            setText(saveStatus, '');
+            saveStatus.className = 'save-status';
+          }, 5000);
+        }
+      });
+    }
+  }
+
+  // =====================
+  //  SSE (Server-Sent Events)
+  // =====================
+  function initSSE() {
+    if (eventSource) {
+      eventSource.close();
+    }
+
+    eventSource = new EventSource('/v1/events');
+
+    eventSource.addEventListener('open', () => {
+      setConnectionStatus(true);
+    });
+
+    // Named event: connected
+    eventSource.addEventListener('connected', (e) => {
+      setConnectionStatus(true);
+      addActivityEvent('connected', safeParseJSON(e.data));
+    });
+
+    // Named event: slide:import
+    eventSource.addEventListener('slide:import', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('slide:import', data);
+      refreshAfterSlideEvent();
+    });
+
+    // Named event: slide:ready
+    eventSource.addEventListener('slide:ready', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('slide:ready', data);
+      refreshAfterSlideEvent();
+    });
+
+    // Named event: tile:pending
+    eventSource.addEventListener('tile:pending', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('tile:pending', data);
+    });
+
+    // Named event: tile:generated
+    eventSource.addEventListener('tile:generated', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('tile:generated', data);
+    });
+
+    // Generic message event (for any unnamed events)
+    eventSource.addEventListener('message', (e) => {
+      const data = safeParseJSON(e.data);
+      if (data && data.event) {
+        addActivityEvent(data.event, data);
+      }
+    });
+
+    eventSource.addEventListener('error', () => {
+      setConnectionStatus(false);
+    });
+  }
+
+  function safeParseJSON(str) {
+    try {
+      return JSON.parse(str);
+    } catch {
+      return {};
+    }
+  }
+
+  function setConnectionStatus(connected) {
+    setDotClass('#connectionDot', connected ? 'connected' : 'disconnected');
+    setText('#connectionText', connected ? 'Conectado' : 'Desconectado');
+  }
+
+  function refreshAfterSlideEvent() {
+    // Refresh dashboard data
+    fetchDashboard();
+    // If slides tab is active, refresh slides too
+    const slidesPanel = $('#panel-slides');
+    if (slidesPanel && slidesPanel.classList.contains('active')) {
+      fetchSlides();
+    }
+  }
+
+  // =====================
+  //  Initialization
+  // =====================
+  function init() {
+    initTabs();
+    initSlideFilters();
+    initActivityControls();
+    initSettingsForm();
+    startDashboardPolling();
+    initSSE();
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
