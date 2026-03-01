@@ -11,11 +11,12 @@
 import { spawn } from 'child_process';
 import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
+import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
-const CLOUD_API_URL = process.env.CLOUD_API_URL || 'http://localhost:3001';
-const EDGE_KEY = process.env.EDGE_KEY || '';
+const CLOUD_API_URL = getCloudApiUrl();
+const EDGE_KEY = getEdgeKey();
 const UPLOAD_CONCURRENCY = parseInt(process.env.UPLOAD_CONCURRENCY || '16', 10);
 const PART_CONCURRENCY = parseInt(process.env.PART_UPLOAD_CONCURRENCY || '6', 10);
 const PART_SIZE = 50 * 1024 * 1024; // 50MB — must match cloud

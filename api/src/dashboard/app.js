@@ -564,6 +564,10 @@
         const z2 = data && data.z != null ? data.z : '?';
         return 'Tile gerado n\u00edvel ' + z2;
       }
+      case 'preview:published':
+        return 'Preview publicado na nuvem';
+      case 'preview:failed':
+        return 'Falha ao publicar preview: ' + (data && data.error || 'erro');
       case 'connected':
         return 'Conex\u00e3o SSE estabelecida';
       default:
@@ -575,6 +579,8 @@
     if (eventType === 'slide:import') return 'import';
     if (eventType === 'slide:ready') return 'ready';
     if (eventType.startsWith('tile:')) return 'tile';
+    if (eventType === 'preview:published') return 'ready';
+    if (eventType === 'preview:failed') return 'error';
     if (eventType === 'connected') return 'connection';
     return 'default';
   }
@@ -816,6 +822,44 @@
   }
 
   // =====================
+  //  Maintenance: Republish Previews
+  // =====================
+  function initMaintenance() {
+    const btn = $('#btnRepublishPreviews');
+    if (!btn) return;
+
+    btn.addEventListener('click', async () => {
+      const statusEl = $('#republishStatus');
+      btn.disabled = true;
+      setText(statusEl, 'Enfileirando...');
+      statusEl.className = 'maintenance-status';
+
+      try {
+        const res = await fetch('/v1/admin/slides/republish-all-previews', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: true }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || res.statusText);
+        }
+
+        const data = await res.json();
+        setText(statusEl, data.message || `${data.queued} l\u00e2mina(s) enfileirada(s)`);
+        statusEl.className = 'maintenance-status success';
+      } catch (err) {
+        setText(statusEl, 'Erro: ' + err.message);
+        statusEl.className = 'maintenance-status error';
+      } finally {
+        btn.disabled = false;
+        setTimeout(() => { setText(statusEl, ''); statusEl.className = 'maintenance-status'; }, 8000);
+      }
+    });
+  }
+
+  // =====================
   //  SSE (Server-Sent Events)
   // =====================
   function initSSE() {
@@ -859,6 +903,19 @@
     eventSource.addEventListener('tile:generated', (e) => {
       const data = safeParseJSON(e.data);
       addActivityEvent('tile:generated', data);
+    });
+
+    // Named event: preview:published
+    eventSource.addEventListener('preview:published', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('preview:published', data);
+      refreshAfterSlideEvent();
+    });
+
+    // Named event: preview:failed
+    eventSource.addEventListener('preview:failed', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('preview:failed', data);
     });
 
     // Generic message event (for any unnamed events)
@@ -906,6 +963,7 @@
     initOcrModal();
     initActivityControls();
     initSettingsForm();
+    initMaintenance();
     startDashboardPolling();
     initSSE();
   }

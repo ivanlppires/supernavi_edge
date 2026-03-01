@@ -8,11 +8,12 @@
 import { readFile, stat, readdir } from 'fs/promises';
 import { join, basename } from 'path';
 import { createHash } from 'crypto';
+import { getEdgeKey, getCloudApiUrl } from '../lib/config-reader.js';
 
 // Configuration (NO S3 credentials)
 const config = {
-  cloudApiUrl: process.env.CLOUD_API_URL || process.env.CLOUD_SYNC_URL || 'http://localhost:3001',
-  edgeKey: process.env.EDGE_KEY || '',
+  cloudApiUrl: getCloudApiUrl(),
+  edgeKey: getEdgeKey(),
   bucket: process.env.S3_BUCKET || 'supernavi',         // only for manifest metadata
   endpoint: process.env.S3_ENDPOINT || 'https://s3.wasabisys.com',  // only for manifest metadata
   region: process.env.S3_REGION || 'us-east-1',          // only for manifest metadata

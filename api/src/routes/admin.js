@@ -10,6 +10,8 @@ import { getConfig, loadConfig, saveConfig, validateConfig, reloadConfig } from 
 import { autoDetectScannerDirs } from '../lib/motic-detect.js';
 import { getWatcherState } from '../services/watcher.js';
 import { restartTunnel } from '../services/tunnel.js';
+import { enqueueJob } from '../lib/queue.js';
+import { getPool } from '../db/index.js';
 
 export default async function adminRoutes(fastify) {
 
@@ -119,6 +121,72 @@ export default async function adminRoutes(fastify) {
         recentFiles: r.recentFiles,
       })),
       count: results.length
+    };
+  });
+
+  // POST /v1/admin/slides/:slideId/republish-preview — re-trigger preview upload
+  fastify.post('/admin/slides/:slideId/republish-preview', async (request, reply) => {
+    const { slideId } = request.params;
+    const { force = true } = request.body || {};
+
+    // Verify slide exists in local DB
+    let slide;
+    try {
+      const result = await getPool().query('SELECT id, status, original_filename FROM slides WHERE id = $1', [slideId]);
+      slide = result.rows[0];
+    } catch {
+      return reply.status(500).send({ error: 'Database query failed' });
+    }
+
+    if (!slide) {
+      return reply.status(404).send({ error: 'Slide not found' });
+    }
+
+    await enqueueJob({
+      type: 'PREVIEW_REPUBLISH',
+      slideId,
+      force,
+    });
+
+    return {
+      success: true,
+      slideId,
+      filename: slide.original_filename,
+      message: 'Preview republish queued',
+    };
+  });
+
+  // POST /v1/admin/slides/republish-all-previews — re-trigger preview upload for all ready slides
+  fastify.post('/admin/slides/republish-all-previews', async (request, reply) => {
+    const { force = true } = request.body || {};
+
+    let slides;
+    try {
+      const result = await getPool().query(
+        "SELECT id, original_filename FROM slides WHERE status = 'ready'",
+      );
+      slides = result.rows;
+    } catch {
+      return reply.status(500).send({ error: 'Database query failed' });
+    }
+
+    if (slides.length === 0) {
+      return reply.send({ success: true, queued: 0, message: 'No ready slides found' });
+    }
+
+    for (const slide of slides) {
+      await enqueueJob({
+        type: 'PREVIEW_REPUBLISH',
+        slideId: slide.id,
+        force,
+      });
+    }
+
+    return {
+      success: true,
+      queued: slides.length,
+      slides: slides.map(s => ({ slideId: s.id, filename: s.original_filename })),
+      message: `Preview republish queued for ${slides.length} slide(s)`,
     };
   });
 }

@@ -1,6 +1,6 @@
 import { createClient } from 'redis';
 import pg from 'pg';
-import { stat, readFile } from 'fs/promises';
+import { stat, readFile, rm } from 'fs/promises';
 import { join } from 'path';
 import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
@@ -8,6 +8,7 @@ import { processSVS_P0, processSVS_P1, generateFullTilePyramid, persistTilesBack
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 import { getConfig as getWasabiConfig, getSlidePrefix } from './preview/wasabiUploader.js';
 import { uploadSlideToCloud } from './cloud-uploader.js';
+import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 
 const { Pool } = pg;
 
@@ -291,8 +292,8 @@ async function processJob(job) {
       // Request cloud to delete preview from Wasabi S3
       console.log(`Requesting cloud cleanup for ${job.slideId.substring(0, 12)}...`);
       try {
-        const CLOUD_API_URL = process.env.CLOUD_API_URL || 'http://localhost:3001';
-        const EDGE_KEY = process.env.EDGE_KEY || '';
+        const CLOUD_API_URL = getCloudApiUrl();
+        const EDGE_KEY = getEdgeKey();
         const res = await fetch(`${CLOUD_API_URL}/edge/slides/${job.slideId}/cleanup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-EDGE-KEY': EDGE_KEY },
@@ -315,6 +316,38 @@ async function processJob(job) {
         });
       }
       // Note: CLEANUP jobs don't have a database job record
+    } else if (job.type === 'PREVIEW_REPUBLISH') {
+      // Re-publish preview for an already-processed slide
+      console.log(`Re-publishing preview for ${job.slideId.substring(0, 12)}...`);
+      try {
+        // Optionally delete marker to force re-upload
+        if (job.force) {
+          const markerPath = join(DERIVED_DIR, job.slideId, 'preview_published.json');
+          await rm(markerPath, { force: true });
+          console.log(`  Deleted preview marker (force mode)`);
+        }
+
+        const previewResult = await publishRemotePreview(job.slideId, job.maxLevel, job.targetMaxDim, { force: true });
+        if (previewResult.published) {
+          console.log(`  Preview republished: ${previewResult.uploadStats.tilesCount} tiles, ${previewResult.uploadStats.totalBytes} bytes in ${previewResult.elapsedMs}ms`);
+          await publishEvent('preview:published', {
+            slideId: job.slideId,
+            maxLevel: previewResult.maxLevel,
+            republish: true,
+            timestamp: Date.now(),
+          });
+        } else if (previewResult.skipped) {
+          console.log(`  Preview republish skipped: ${previewResult.reason}`);
+        }
+      } catch (err) {
+        console.error(`  Preview republish failed: ${err.message}`);
+        await publishEvent('preview:failed', {
+          slideId: job.slideId,
+          error: err.message,
+          timestamp: Date.now(),
+        });
+      }
+      // Note: PREVIEW_REPUBLISH jobs don't have a database job record
     } else if (job.type === 'TILEGEN') {
       // Full tile pyramid generation using vips dzsave
       await updateSlide(job.slideId, { tilegen_status: 'running' });

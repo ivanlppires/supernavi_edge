@@ -236,14 +236,15 @@ async function needsRepublish(slideId, maxLevel, targetMaxDim) {
 export async function publishRemotePreview(
   slideId,
   maxLevel = PREVIEW_MAX_LEVEL,
-  targetMaxDim = PREVIEW_TARGET_MAX_DIM
+  targetMaxDim = PREVIEW_TARGET_MAX_DIM,
+  { force = false } = {}
 ) {
   const startTime = Date.now();
 
-  console.log(`\n[publishRemotePreview] slideId=${slideId} maxLevel=${maxLevel} targetMaxDim=${targetMaxDim}`);
+  console.log(`\n[publishRemotePreview] slideId=${slideId} maxLevel=${maxLevel} targetMaxDim=${targetMaxDim} force=${force}`);
   console.log(`  Config: ${JSON.stringify(getConfig())}`);
 
-  if (!PREVIEW_ENABLED) {
+  if (!PREVIEW_ENABLED && !force) {
     console.log(`[publisher] Preview publishing disabled (PREVIEW_REMOTE_ENABLED=${PREVIEW_ENABLED})`);
     return { published: false, skipped: true, reason: 'disabled' };
   }
