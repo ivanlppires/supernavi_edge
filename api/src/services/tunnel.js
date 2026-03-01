@@ -9,7 +9,10 @@ import WebSocket from 'ws';
 
 // Configuration from environment
 const CLOUD_TUNNEL_URL = process.env.CLOUD_TUNNEL_URL || '';
+// Token resolution: EDGE_KEY (preferred) → EDGE_TUNNEL_TOKEN (deprecated fallback)
+const EDGE_KEY = process.env.EDGE_KEY || '';
 const EDGE_TUNNEL_TOKEN = process.env.EDGE_TUNNEL_TOKEN || '';
+const TUNNEL_TOKEN = EDGE_KEY || EDGE_TUNNEL_TOKEN;
 const EDGE_AGENT_ID = process.env.EDGE_AGENT_ID || '';
 
 // Reconnection settings
@@ -47,13 +50,8 @@ export function startTunnel() {
     return;
   }
 
-  if (!EDGE_TUNNEL_TOKEN) {
-    console.log('[Tunnel] EDGE_TUNNEL_TOKEN not configured, tunnel disabled');
-    return;
-  }
-
-  if (!EDGE_AGENT_ID) {
-    console.log('[Tunnel] EDGE_AGENT_ID not configured, tunnel disabled');
+  if (!TUNNEL_TOKEN) {
+    console.log('[Tunnel] Neither EDGE_KEY nor EDGE_TUNNEL_TOKEN configured, tunnel disabled');
     return;
   }
 
@@ -62,7 +60,17 @@ export function startTunnel() {
     return;
   }
 
-  console.log(`[Tunnel] Connecting to ${CLOUD_TUNNEL_URL} as agent ${EDGE_AGENT_ID}...`);
+  // Log which auth mechanism is in use
+  if (EDGE_KEY) {
+    console.log(`[Tunnel] Connecting to ${CLOUD_TUNNEL_URL} using EDGE_KEY...`);
+  } else {
+    console.warn(`[Tunnel] Connecting to ${CLOUD_TUNNEL_URL} using deprecated EDGE_TUNNEL_TOKEN — migrate to EDGE_KEY`);
+  }
+
+  if (EDGE_AGENT_ID) {
+    console.log(`[Tunnel] Agent ID (display): ${EDGE_AGENT_ID}`);
+  }
+
   connect();
 }
 
@@ -76,17 +84,21 @@ function connect() {
 
   // Build URL with query params
   const url = new URL(CLOUD_TUNNEL_URL);
-  url.searchParams.set('agentId', EDGE_AGENT_ID);
+  // agentId is optional now (cloud derives from EdgeKey), but still sent for display/legacy
+  if (EDGE_AGENT_ID) {
+    url.searchParams.set('agentId', EDGE_AGENT_ID);
+  }
 
   try {
     ws = new WebSocket(url.toString(), {
       headers: {
-        'Authorization': `Bearer ${EDGE_TUNNEL_TOKEN}`,
+        'Authorization': `Bearer ${TUNNEL_TOKEN}`,
       },
     });
 
     ws.on('open', () => {
-      console.log(`[Tunnel] Connected to cloud as ${EDGE_AGENT_ID}`);
+      const idInfo = EDGE_AGENT_ID ? ` as ${EDGE_AGENT_ID}` : '';
+      console.log(`[Tunnel] Connected to cloud${idInfo}`);
       // Reset reconnect delay on successful connection
       reconnectDelay = INITIAL_RECONNECT_DELAY;
       // Start client-side keepalive pings
@@ -283,10 +295,11 @@ export function isTunnelConnected() {
  */
 export function getTunnelStatus() {
   return {
-    configured: !!(CLOUD_TUNNEL_URL && EDGE_TUNNEL_TOKEN && EDGE_AGENT_ID),
+    configured: !!(CLOUD_TUNNEL_URL && TUNNEL_TOKEN),
     connected: isTunnelConnected(),
     agentId: EDGE_AGENT_ID || null,
     cloudUrl: CLOUD_TUNNEL_URL || null,
+    authMode: EDGE_KEY ? 'edge_key' : (EDGE_TUNNEL_TOKEN ? 'legacy_token' : 'none'),
   };
 }
 
