@@ -22,7 +22,7 @@ const DEFAULTS = {
   rawDirContainer: '/data/raw',
   derivedDirContainer: '/data/derived',
   stableSeconds: 15,
-  caseBaseRegex: '^(AP\\d{6,12})',
+  caseBaseRegex: '^((?:AP|PA|IM|C)\\d{6,12})',
 };
 
 /**
