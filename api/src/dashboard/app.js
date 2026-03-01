@@ -675,8 +675,6 @@
       if (stableDisplay) stableDisplay.textContent = cfg.stableSeconds;
     }
 
-    const caseRegex = $('#cfgCaseRegex');
-    if (caseRegex) caseRegex.value = cfg.caseBaseRegex || '';
   }
 
   function initSettingsForm() {
@@ -754,7 +752,7 @@
             type: ($('#cfgScannerType') || {}).value || 'unknown'
           },
           stableSeconds: parseInt(($('#cfgStableSeconds') || {}).value, 10) || 10,
-          caseBaseRegex: ($('#cfgCaseRegex') || {}).value || ''
+          caseBaseRegex: undefined
         };
 
         try {
