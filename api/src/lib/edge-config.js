@@ -210,7 +210,9 @@ export async function loadConfig() {
  * @param {{ path?: string }} [options]
  */
 export async function saveConfig(config, options = {}) {
-  const configPath = options.path || getConfigPath({ host: true });
+  // Save to the same path that loadConfig would find:
+  // /config/ (volume mount) if writable, otherwise ./config/ (host fallback)
+  const configPath = options.path || getConfigPath();
   await mkdir(dirname(configPath), { recursive: true });
 
   config.updatedAt = new Date().toISOString();
