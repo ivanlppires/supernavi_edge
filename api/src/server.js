@@ -54,6 +54,14 @@ async function buildApp() {
     decorateReply: false
   });
 
+  // Dashboard UI (served at root /)
+  await app.register(fastifyStatic, {
+    root: join(__dirname, 'dashboard'),
+    prefix: '/',
+    decorateReply: false,
+    wildcard: false
+  });
+
   // Auto-load plugins
   await app.register(autoLoad, {
     dir: join(__dirname, 'plugins'),
