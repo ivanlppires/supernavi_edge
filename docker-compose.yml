@@ -20,8 +20,11 @@ services:
       TILE_JPEG_QUALITY: ${TILE_JPEG_QUALITY:-80}
       MIGRATIONS_DIR: /app/db/migrations
       CLOUD_SYNC_URL: ${CLOUD_SYNC_URL:-http://mock-cloud:4000}
-      # Edge Tunnel Configuration (use host.docker.internal for local testing)
+      # Edge Authentication (used for both tunnel and Edge API)
+      EDGE_KEY: ${EDGE_KEY:-}
+      # Edge Tunnel Configuration
       CLOUD_TUNNEL_URL: ${CLOUD_TUNNEL_URL:-}
+      # DEPRECATED: Use EDGE_KEY instead. Kept for backward compatibility.
       EDGE_TUNNEL_TOKEN: ${EDGE_TUNNEL_TOKEN:-}
       EDGE_AGENT_ID: ${EDGE_AGENT_ID:-}
       SCANNER_ENABLED: ${SCANNER_ENABLED:-false}
