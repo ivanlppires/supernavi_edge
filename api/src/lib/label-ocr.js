@@ -92,7 +92,7 @@ export async function ocrLabel(imagePath) {
   const mediaType = ext === 'png' ? 'image/png' : 'image/jpeg';
 
   const response = await getClient().messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model: 'claude-sonnet-4-6-20250514',
     max_tokens: 100,
     messages: [
       {
