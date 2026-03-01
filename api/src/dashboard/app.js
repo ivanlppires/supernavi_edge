@@ -649,14 +649,15 @@
     const cloud = cfg.cloud || {};
 
     // Cloud connection fields
-    const cloudUrl = $('#cfgCloudUrl');
-    if (cloudUrl) cloudUrl.value = cloud.tunnelUrl || '';
-
     const edgeKey = $('#cfgEdgeKey');
     if (edgeKey) edgeKey.value = cloud.edgeKey || '';
 
-    const agentId = $('#cfgAgentId');
-    if (agentId) agentId.value = cloud.agentId || '';
+    // Show edge info if key is configured
+    if (cloud.edgeKey) {
+      verifyAndShowEdgeInfo(cloud.edgeKey);
+    } else {
+      hideEdgeInfo();
+    }
 
     // Scanner/dir fields
     const slidesDir = $('#cfgSlidesDir');
@@ -709,11 +710,44 @@
         setText(saveStatus, 'Salvando...');
         saveStatus.className = 'save-status';
 
+        const edgeKeyValue = ($('#cfgEdgeKey') || {}).value || '';
+
+        // If EDGE_KEY is provided, verify it against cloud first
+        let agentId = '';
+        if (edgeKeyValue) {
+          setText(saveStatus, 'Verificando chave...');
+          try {
+            const verifyRes = await fetch('/v1/admin/verify-key', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ edgeKey: edgeKeyValue })
+            });
+
+            if (verifyRes.ok) {
+              const info = await verifyRes.json();
+              agentId = info.edgeKeyId || '';
+              showEdgeInfo(info.name, info.labName);
+            } else {
+              const errBody = await verifyRes.json().catch(() => ({}));
+              setText(saveStatus, 'Chave inv\u00e1lida: ' + (errBody.error || 'erro'));
+              saveStatus.className = 'save-status error';
+              hideEdgeInfo();
+              saveBtn.disabled = false;
+              setTimeout(() => { setText(saveStatus, ''); saveStatus.className = 'save-status'; }, 5000);
+              return;
+            }
+          } catch (err) {
+            // Cloud unreachable — save anyway, tunnel will validate on connect
+            console.warn('Could not verify key:', err.message);
+          }
+        } else {
+          hideEdgeInfo();
+        }
+
         const payload = {
           cloud: {
-            tunnelUrl: ($('#cfgCloudUrl') || {}).value || '',
-            edgeKey: ($('#cfgEdgeKey') || {}).value || '',
-            agentId: ($('#cfgAgentId') || {}).value || '',
+            edgeKey: edgeKeyValue,
+            agentId: agentId,
           },
           slidesDirHost: ($('#cfgSlidesDir') || {}).value || '',
           scanner: {
@@ -743,14 +777,44 @@
           saveStatus.className = 'save-status error';
         } finally {
           saveBtn.disabled = false;
-          // Clear status after 5 seconds
-          setTimeout(() => {
-            setText(saveStatus, '');
-            saveStatus.className = 'save-status';
-          }, 5000);
+          setTimeout(() => { setText(saveStatus, ''); saveStatus.className = 'save-status'; }, 5000);
         }
       });
     }
+  }
+
+  // =====================
+  //  Edge Info helpers
+  // =====================
+  async function verifyAndShowEdgeInfo(edgeKey) {
+    try {
+      const res = await fetch('/v1/admin/verify-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ edgeKey })
+      });
+      if (res.ok) {
+        const info = await res.json();
+        showEdgeInfo(info.name, info.labName);
+      } else {
+        hideEdgeInfo();
+      }
+    } catch {
+      hideEdgeInfo();
+    }
+  }
+
+  function showEdgeInfo(name, labName) {
+    const container = $('#edgeInfo');
+    if (!container) return;
+    setText('#edgeInfoName', name || '--');
+    setText('#edgeInfoLab', labName || '--');
+    container.style.display = '';
+  }
+
+  function hideEdgeInfo() {
+    const container = $('#edgeInfo');
+    if (container) container.style.display = 'none';
   }
 
   // =====================

@@ -48,7 +48,6 @@ export default async function adminRoutes(fastify) {
 
     // Detect if cloud settings changed
     const cloudChanged = patch.cloud && (
-      patch.cloud.tunnelUrl !== undefined ||
       patch.cloud.edgeKey !== undefined ||
       patch.cloud.agentId !== undefined
     );
@@ -74,6 +73,37 @@ export default async function adminRoutes(fastify) {
       watcher: getWatcherState(),
       message,
     };
+  });
+
+  // POST /v1/admin/verify-key — verify EDGE_KEY against cloud, return edge info
+  fastify.post('/admin/verify-key', async (request, reply) => {
+    const { edgeKey } = request.body || {};
+    if (!edgeKey || typeof edgeKey !== 'string') {
+      return reply.status(400).send({ error: 'edgeKey is required' });
+    }
+
+    const cloudApiUrl = process.env.CLOUD_API_URL || 'https://cloud.supernavi.app';
+
+    try {
+      const res = await fetch(`${cloudApiUrl}/edge/identify`, {
+        headers: { 'Authorization': `Bearer ${edgeKey}` },
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        return reply.status(res.status).send({
+          error: body.error || 'Key verification failed',
+        });
+      }
+
+      const data = await res.json();
+      return reply.send(data);
+    } catch (err) {
+      return reply.status(502).send({
+        error: 'Could not reach cloud server',
+        message: err.message,
+      });
+    }
   });
 
   // GET /v1/admin/scanner/detect — auto-detect scanner directories

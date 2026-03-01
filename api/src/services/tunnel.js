@@ -8,6 +8,9 @@
 import WebSocket from 'ws';
 import { getConfig } from '../lib/edge-config.js';
 
+// Default cloud tunnel URL (env var override for dev)
+const DEFAULT_CLOUD_TUNNEL_URL = 'wss://cloud.supernavi.app/edge/connect';
+
 /**
  * Read tunnel settings from edge-config.json (preferred) with env var fallback.
  */
@@ -17,7 +20,7 @@ function getSettings() {
   const edgeKey = cloud.edgeKey || process.env.EDGE_KEY || '';
   const edgeTunnelToken = process.env.EDGE_TUNNEL_TOKEN || '';
   return {
-    cloudTunnelUrl: cloud.tunnelUrl || process.env.CLOUD_TUNNEL_URL || '',
+    cloudTunnelUrl: process.env.CLOUD_TUNNEL_URL || DEFAULT_CLOUD_TUNNEL_URL,
     edgeKey,
     edgeTunnelToken,
     tunnelToken: edgeKey || edgeTunnelToken,

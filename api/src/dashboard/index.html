@@ -203,12 +203,6 @@
         <div class="form-section-title">Conex&atilde;o Cloud</div>
 
         <div class="form-group">
-          <label class="form-label" for="cfgCloudUrl">Cloud URL</label>
-          <input class="form-input" type="text" id="cfgCloudUrl" placeholder="wss://cloud.supernavi.app/edge/connect">
-          <span class="form-hint">Endere&ccedil;o WebSocket do servidor cloud</span>
-        </div>
-
-        <div class="form-group">
           <label class="form-label" for="cfgEdgeKey">EDGE_KEY</label>
           <div class="input-password-wrap">
             <input class="form-input" type="password" id="cfgEdgeKey" placeholder="Cole a chave gerada no painel admin" autocomplete="off">
@@ -226,10 +220,16 @@
           <span class="form-hint">Chave de autentica&ccedil;&atilde;o gerada no painel admin do cloud</span>
         </div>
 
-        <div class="form-group">
-          <label class="form-label" for="cfgAgentId">Agent ID</label>
-          <input class="form-input" type="text" id="cfgAgentId" placeholder="nome-do-edge">
-          <span class="form-hint">Identificador &uacute;nico deste edge (ex: MAC01, lab-patologia)</span>
+        <div class="edge-info" id="edgeInfo" style="display:none">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="edge-info-icon">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+          <span class="edge-info-text">
+            <strong id="edgeInfoName">--</strong>
+            <span class="edge-info-sep">&middot;</span>
+            <span id="edgeInfoLab">--</span>
+          </span>
         </div>
 
         <div class="form-section-divider"></div>
