@@ -6,14 +6,24 @@
  */
 
 import WebSocket from 'ws';
+import { getConfig } from '../lib/edge-config.js';
 
-// Configuration from environment
-const CLOUD_TUNNEL_URL = process.env.CLOUD_TUNNEL_URL || '';
-// Token resolution: EDGE_KEY (preferred) → EDGE_TUNNEL_TOKEN (deprecated fallback)
-const EDGE_KEY = process.env.EDGE_KEY || '';
-const EDGE_TUNNEL_TOKEN = process.env.EDGE_TUNNEL_TOKEN || '';
-const TUNNEL_TOKEN = EDGE_KEY || EDGE_TUNNEL_TOKEN;
-const EDGE_AGENT_ID = process.env.EDGE_AGENT_ID || '';
+/**
+ * Read tunnel settings from edge-config.json (preferred) with env var fallback.
+ */
+function getSettings() {
+  const cfg = getConfig();
+  const cloud = cfg.cloud || {};
+  const edgeKey = cloud.edgeKey || process.env.EDGE_KEY || '';
+  const edgeTunnelToken = process.env.EDGE_TUNNEL_TOKEN || '';
+  return {
+    cloudTunnelUrl: cloud.tunnelUrl || process.env.CLOUD_TUNNEL_URL || '',
+    edgeKey,
+    edgeTunnelToken,
+    tunnelToken: edgeKey || edgeTunnelToken,
+    edgeAgentId: cloud.agentId || process.env.EDGE_AGENT_ID || '',
+  };
+}
 
 // Reconnection settings
 const INITIAL_RECONNECT_DELAY = 1000; // 1 second
@@ -45,12 +55,14 @@ export function initTunnel(app) {
  * Start the tunnel connection
  */
 export function startTunnel() {
-  if (!CLOUD_TUNNEL_URL) {
+  const settings = getSettings();
+
+  if (!settings.cloudTunnelUrl) {
     console.log('[Tunnel] CLOUD_TUNNEL_URL not configured, tunnel disabled');
     return;
   }
 
-  if (!TUNNEL_TOKEN) {
+  if (!settings.tunnelToken) {
     console.log('[Tunnel] Neither EDGE_KEY nor EDGE_TUNNEL_TOKEN configured, tunnel disabled');
     return;
   }
@@ -61,14 +73,14 @@ export function startTunnel() {
   }
 
   // Log which auth mechanism is in use
-  if (EDGE_KEY) {
-    console.log(`[Tunnel] Connecting to ${CLOUD_TUNNEL_URL} using EDGE_KEY...`);
+  if (settings.edgeKey) {
+    console.log(`[Tunnel] Connecting to ${settings.cloudTunnelUrl} using EDGE_KEY...`);
   } else {
-    console.warn(`[Tunnel] Connecting to ${CLOUD_TUNNEL_URL} using deprecated EDGE_TUNNEL_TOKEN — migrate to EDGE_KEY`);
+    console.warn(`[Tunnel] Connecting to ${settings.cloudTunnelUrl} using deprecated EDGE_TUNNEL_TOKEN — migrate to EDGE_KEY`);
   }
 
-  if (EDGE_AGENT_ID) {
-    console.log(`[Tunnel] Agent ID (display): ${EDGE_AGENT_ID}`);
+  if (settings.edgeAgentId) {
+    console.log(`[Tunnel] Agent ID (display): ${settings.edgeAgentId}`);
   }
 
   connect();
@@ -82,22 +94,24 @@ function connect() {
     return;
   }
 
+  const settings = getSettings();
+
   // Build URL with query params
-  const url = new URL(CLOUD_TUNNEL_URL);
+  const url = new URL(settings.cloudTunnelUrl);
   // agentId is optional now (cloud derives from EdgeKey), but still sent for display/legacy
-  if (EDGE_AGENT_ID) {
-    url.searchParams.set('agentId', EDGE_AGENT_ID);
+  if (settings.edgeAgentId) {
+    url.searchParams.set('agentId', settings.edgeAgentId);
   }
 
   try {
     ws = new WebSocket(url.toString(), {
       headers: {
-        'Authorization': `Bearer ${TUNNEL_TOKEN}`,
+        'Authorization': `Bearer ${settings.tunnelToken}`,
       },
     });
 
     ws.on('open', () => {
-      const idInfo = EDGE_AGENT_ID ? ` as ${EDGE_AGENT_ID}` : '';
+      const idInfo = settings.edgeAgentId ? ` as ${settings.edgeAgentId}` : '';
       console.log(`[Tunnel] Connected to cloud${idInfo}`);
       // Reset reconnect delay on successful connection
       reconnectDelay = INITIAL_RECONNECT_DELAY;
@@ -294,19 +308,44 @@ export function isTunnelConnected() {
  * Get tunnel status for health checks
  */
 export function getTunnelStatus() {
+  const settings = getSettings();
   return {
-    configured: !!(CLOUD_TUNNEL_URL && TUNNEL_TOKEN),
+    configured: !!(settings.cloudTunnelUrl && settings.tunnelToken),
     connected: isTunnelConnected(),
-    agentId: EDGE_AGENT_ID || null,
-    cloudUrl: CLOUD_TUNNEL_URL || null,
-    authMode: EDGE_KEY ? 'edge_key' : (EDGE_TUNNEL_TOKEN ? 'legacy_token' : 'none'),
+    agentId: settings.edgeAgentId || null,
+    cloudUrl: settings.cloudTunnelUrl || null,
+    authMode: settings.edgeKey ? 'edge_key' : (settings.edgeTunnelToken ? 'legacy_token' : 'none'),
   };
+}
+
+/**
+ * Restart the tunnel (disconnect then reconnect with current config).
+ * Used when cloud settings change via the dashboard.
+ */
+export function restartTunnel() {
+  console.log('[Tunnel] Restarting with updated config...');
+  // Stop current connection (without setting isShuttingDown permanently)
+  stopPingInterval();
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (ws) {
+    ws.close(1000, 'Config changed');
+    ws = null;
+  }
+  // Reset state for new connection
+  isShuttingDown = false;
+  reconnectDelay = INITIAL_RECONNECT_DELAY;
+  // Start with new settings
+  startTunnel();
 }
 
 export default {
   initTunnel,
   startTunnel,
   stopTunnel,
+  restartTunnel,
   isTunnelConnected,
   getTunnelStatus,
 };

@@ -9,6 +9,7 @@
 import { getConfig, loadConfig, saveConfig, validateConfig, reloadConfig } from '../lib/edge-config.js';
 import { autoDetectScannerDirs } from '../lib/motic-detect.js';
 import { getWatcherState } from '../services/watcher.js';
+import { restartTunnel } from '../services/tunnel.js';
 
 export default async function adminRoutes(fastify) {
 
@@ -26,9 +27,15 @@ export default async function adminRoutes(fastify) {
       return reply.badRequest('Request body must be a JSON object');
     }
 
-    // Merge patch onto current config
+    // Merge patch onto current config (deep-merge nested objects)
     const current = getConfig();
     const merged = { ...current, ...patch };
+    if (patch.scanner && current.scanner) {
+      merged.scanner = { ...current.scanner, ...patch.scanner };
+    }
+    if (patch.cloud && current.cloud) {
+      merged.cloud = { ...current.cloud, ...patch.cloud };
+    }
 
     // Validate
     const { valid, errors, config: validated } = validateConfig(merged);
@@ -39,6 +46,13 @@ export default async function adminRoutes(fastify) {
     // Detect if ingest dir changed (needs container restart for volume mount)
     const dirChanged = patch.slidesDirHost && patch.slidesDirHost !== current.slidesDirHost;
 
+    // Detect if cloud settings changed
+    const cloudChanged = patch.cloud && (
+      patch.cloud.tunnelUrl !== undefined ||
+      patch.cloud.edgeKey !== undefined ||
+      patch.cloud.agentId !== undefined
+    );
+
     // Save
     validated.source = validated.source === 'defaults' ? 'wizard-http' : validated.source;
     await saveConfig(validated);
@@ -46,12 +60,19 @@ export default async function adminRoutes(fastify) {
     // Reload cached config
     await reloadConfig();
 
+    // Restart tunnel if cloud settings changed
+    if (cloudChanged) {
+      restartTunnel();
+    }
+
+    let message = 'Config saved and applied.';
+    if (dirChanged) message = 'Config saved. Restart containers to apply new volume mount.';
+    else if (cloudChanged) message = 'Config saved. Tunnel reconnecting...';
+
     return {
       config: validated,
       watcher: getWatcherState(),
-      message: dirChanged
-        ? 'Config saved. Restart containers to apply new volume mount.'
-        : 'Config saved and applied.'
+      message,
     };
   });
 

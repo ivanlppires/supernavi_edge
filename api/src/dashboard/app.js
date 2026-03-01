@@ -646,7 +646,19 @@
 
   function populateSettingsForm(data) {
     const cfg = data.config || {};
+    const cloud = cfg.cloud || {};
 
+    // Cloud connection fields
+    const cloudUrl = $('#cfgCloudUrl');
+    if (cloudUrl) cloudUrl.value = cloud.tunnelUrl || '';
+
+    const edgeKey = $('#cfgEdgeKey');
+    if (edgeKey) edgeKey.value = cloud.edgeKey || '';
+
+    const agentId = $('#cfgAgentId');
+    if (agentId) agentId.value = cloud.agentId || '';
+
+    // Scanner/dir fields
     const slidesDir = $('#cfgSlidesDir');
     if (slidesDir) slidesDir.value = cfg.slidesDirHost || '';
 
@@ -667,6 +679,18 @@
   }
 
   function initSettingsForm() {
+    // Password toggle for EDGE_KEY
+    const toggleBtn = $('#toggleEdgeKey');
+    const edgeKeyInput = $('#cfgEdgeKey');
+    if (toggleBtn && edgeKeyInput) {
+      toggleBtn.addEventListener('click', () => {
+        const isPassword = edgeKeyInput.type === 'password';
+        edgeKeyInput.type = isPassword ? 'text' : 'password';
+        toggleBtn.querySelector('.icon-eye').style.display = isPassword ? 'none' : '';
+        toggleBtn.querySelector('.icon-eye-off').style.display = isPassword ? '' : 'none';
+      });
+    }
+
     // Range slider live display
     const stableSeconds = $('#cfgStableSeconds');
     const stableDisplay = $('#stableSecondsValue');
@@ -686,6 +710,11 @@
         saveStatus.className = 'save-status';
 
         const payload = {
+          cloud: {
+            tunnelUrl: ($('#cfgCloudUrl') || {}).value || '',
+            edgeKey: ($('#cfgEdgeKey') || {}).value || '',
+            agentId: ($('#cfgAgentId') || {}).value || '',
+          },
           slidesDirHost: ($('#cfgSlidesDir') || {}).value || '',
           scanner: {
             type: ($('#cfgScannerType') || {}).value || 'unknown'

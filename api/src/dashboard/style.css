@@ -806,6 +806,51 @@ body::before {
   line-height: 1.4;
 }
 
+/* Section titles & dividers */
+.form-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 16px;
+}
+
+.form-section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 28px 0 20px;
+}
+
+/* Password input wrapper */
+.input-password-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-password-wrap .form-input {
+  padding-right: 40px;
+}
+
+.btn-toggle-password {
+  position: absolute;
+  right: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition-fast);
+}
+
+.btn-toggle-password:hover {
+  color: var(--text-primary);
+}
+
 /* Range slider — custom industrial styling */
 .form-range {
   width: 100%;

@@ -23,6 +23,7 @@ const DEFAULTS = {
   derivedDirContainer: '/data/derived',
   stableSeconds: 15,
   caseBaseRegex: '^((?:AP|PA|IM|C)\\d{6,12})',
+  cloud: { tunnelUrl: '', edgeKey: '', agentId: '' },
 };
 
 /**
@@ -129,6 +130,34 @@ export function validateConfig(raw) {
       config.caseBaseRegex = raw.caseBaseRegex;
     } catch {
       errors.push('caseBaseRegex is not a valid regular expression');
+    }
+  }
+
+  // Cloud connection settings
+  if (raw.cloud !== undefined && typeof raw.cloud === 'object') {
+    config.cloud = {
+      tunnelUrl: '',
+      edgeKey: '',
+      agentId: '',
+    };
+    if (raw.cloud.tunnelUrl !== undefined) {
+      const url = String(raw.cloud.tunnelUrl).trim();
+      if (url && !url.startsWith('ws://') && !url.startsWith('wss://')) {
+        errors.push('cloud.tunnelUrl must start with ws:// or wss://');
+      } else {
+        config.cloud.tunnelUrl = url;
+      }
+    }
+    if (raw.cloud.edgeKey !== undefined) {
+      config.cloud.edgeKey = String(raw.cloud.edgeKey);
+    }
+    if (raw.cloud.agentId !== undefined) {
+      const id = String(raw.cloud.agentId).trim();
+      if (id && !/^[a-zA-Z0-9_-]{1,64}$/.test(id)) {
+        errors.push('cloud.agentId must be 1-64 chars: alphanumeric, _ or -');
+      } else {
+        config.cloud.agentId = id;
+      }
     }
   }
 
