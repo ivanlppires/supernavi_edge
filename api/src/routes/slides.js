@@ -1,6 +1,6 @@
 import { createReadStream, createWriteStream } from 'fs';
 import { access, readFile, readdir, mkdir, rm } from 'fs/promises';
-import { join, extname } from 'path';
+import { join, extname, basename } from 'path';
 import { pipeline } from 'stream/promises';
 import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide, updateSlideOcr } from '../db/slides.js';
 import { generateTile, getPendingCount } from '../services/tilegen-svs.js';
@@ -164,8 +164,11 @@ export default async function slidesRoutes(fastify) {
       return { error: 'Missing X-Filename header' };
     }
 
+    // Sanitize filename to prevent path traversal
+    const safeFilename = basename(filename);
+
     // Validate extension
-    const ext = extname(filename).toLowerCase();
+    const ext = extname(safeFilename).toLowerCase();
     if (!SUPPORTED_EXTENSIONS.includes(ext)) {
       reply.code(400);
       return { error: `Unsupported file format: ${ext}. Supported: ${SUPPORTED_EXTENSIONS.join(', ')}` };
@@ -175,15 +178,15 @@ export default async function slidesRoutes(fastify) {
     await mkdir(INGEST_DIR, { recursive: true });
 
     // Write file to inbox
-    const inboxPath = join(INGEST_DIR, filename);
+    const inboxPath = join(INGEST_DIR, safeFilename);
     try {
       // request.body is the raw stream (from content type parser)
       await pipeline(request.body, createWriteStream(inboxPath));
-      console.log(`Received upload: ${filename} -> ${inboxPath}`);
+      console.log(`Received upload: ${safeFilename} -> ${inboxPath}`);
 
       return {
         success: true,
-        filename,
+        filename: safeFilename,
         message: 'File received, processing will start shortly'
       };
     } catch (err) {
