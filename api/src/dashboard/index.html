@@ -242,6 +242,41 @@
 
   </main>
 
+  <!-- OCR Review Modal -->
+  <div class="ocr-modal-overlay" id="ocrModal">
+    <div class="ocr-modal">
+      <div class="ocr-modal-header">
+        <h2 class="ocr-modal-title">Verifica&ccedil;&atilde;o OCR</h2>
+        <button class="ocr-modal-close" id="ocrModalClose" aria-label="Fechar">&times;</button>
+      </div>
+      <div class="ocr-modal-body">
+        <div class="ocr-label-container">
+          <img class="ocr-label-image" id="ocrLabelImage" alt="Label da l&acirc;mina">
+          <div class="ocr-label-placeholder" id="ocrLabelPlaceholder">Sem imagem do label</div>
+        </div>
+        <div class="ocr-info">
+          <div class="ocr-info-row">
+            <span class="ocr-info-label">Leitura OCR</span>
+            <span class="ocr-info-value" id="ocrReading">--</span>
+          </div>
+          <div class="ocr-info-row">
+            <span class="ocr-info-label">Arquivo</span>
+            <span class="ocr-info-value ocr-filename-value" id="ocrFilename">--</span>
+          </div>
+          <div class="ocr-info-row">
+            <span class="ocr-info-label">Status</span>
+            <span class="ocr-info-value" id="ocrStatusValue">--</span>
+          </div>
+        </div>
+        <div class="ocr-status-msg" id="ocrStatusMsg"></div>
+      </div>
+      <div class="ocr-modal-footer">
+        <button class="btn-reocr" id="btnReocr">Re-ler OCR</button>
+        <button class="btn-close-modal" id="btnCloseOcr">Fechar</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>

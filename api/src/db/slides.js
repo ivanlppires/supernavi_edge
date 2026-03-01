@@ -42,7 +42,7 @@ export async function getSlide(id) {
 
 export async function listSlides() {
   const result = await query(
-    'SELECT id, original_filename, status, width, height, max_level, level_ready_max, format, app_mag, mpp, created_at FROM slides ORDER BY created_at DESC'
+    'SELECT id, original_filename, status, width, height, max_level, level_ready_max, format, app_mag, mpp, created_at, ocr_status, external_case_base, external_slide_label, dsmeta_path FROM slides ORDER BY created_at DESC'
   );
   return result.rows;
 }

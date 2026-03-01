@@ -2,9 +2,11 @@ import { createReadStream, createWriteStream } from 'fs';
 import { access, readFile, readdir, mkdir, rm } from 'fs/promises';
 import { join, extname } from 'path';
 import { pipeline } from 'stream/promises';
-import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide } from '../db/slides.js';
+import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide, updateSlideOcr } from '../db/slides.js';
 import { generateTile, getPendingCount } from '../services/tilegen-svs.js';
 import { enqueueJob } from '../lib/queue.js';
+import { query } from '../db/index.js';
+import { ocrLabel, isOcrEnabled } from '../lib/label-ocr.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
@@ -77,7 +79,11 @@ export default async function slidesRoutes(fastify) {
         onDemand: isWSIFormat(s.format),
         appMag: s.app_mag || null,    // Native scan magnification
         mpp: s.mpp || null,            // Microns per pixel
-        createdAt: s.created_at
+        createdAt: s.created_at,
+        ocrStatus: s.ocr_status || null,
+        externalCaseBase: s.external_case_base || null,
+        externalSlideLabel: s.external_slide_label || null,
+        hasLabel: !!s.dsmeta_path
       }))
     };
   });
@@ -346,6 +352,116 @@ export default async function slidesRoutes(fastify) {
       tilesComplete,
       onDemand: isOnDemand,
       pendingGenerations: isOnDemand ? getPendingCount() : 0
+    };
+  });
+
+  // Get slide label image (from dsmeta directory)
+  fastify.get('/slides/:slideId/label', async (request, reply) => {
+    const { slideId } = request.params;
+    const slide = await getSlide(slideId);
+
+    if (!slide || !slide.dsmeta_path) {
+      reply.code(404);
+      return { error: 'Label not found' };
+    }
+
+    const labelPath = join(slide.dsmeta_path, 'label.jpg');
+
+    try {
+      await access(labelPath);
+      reply.header('Content-Type', 'image/jpeg');
+      reply.header('Cache-Control', 'no-cache');
+      return createReadStream(labelPath);
+    } catch {
+      reply.code(404);
+      return { error: 'Label image not found' };
+    }
+  });
+
+  // Trigger re-OCR for a slide's label
+  fastify.post('/slides/:slideId/reocr', async (request, reply) => {
+    const { slideId } = request.params;
+    const slide = await getSlide(slideId);
+
+    if (!slide) {
+      reply.code(404);
+      return { error: 'Slide not found' };
+    }
+
+    if (!slide.dsmeta_path) {
+      reply.code(400);
+      return { error: 'No dsmeta directory for this slide' };
+    }
+
+    if (!isOcrEnabled()) {
+      reply.code(400);
+      return { error: 'OCR is not enabled (ANTHROPIC_API_KEY not set)' };
+    }
+
+    const labelPath = join(slide.dsmeta_path, 'label.jpg');
+
+    try {
+      await access(labelPath);
+    } catch {
+      reply.code(404);
+      return { error: 'Label image not found at dsmeta path' };
+    }
+
+    // Run OCR
+    const ocrResult = await ocrLabel(labelPath);
+
+    if (!ocrResult) {
+      await updateSlideOcr(slideId, { ocrStatus: 'pending' });
+      return {
+        success: false,
+        message: 'OCR could not read the label',
+        ocrStatus: 'pending'
+      };
+    }
+
+    const format = slide.format || 'svs';
+    const newFilename = ocrResult.fullName + '.' + format;
+
+    // Update slide DB
+    await updateSlideOcr(slideId, {
+      originalFilename: newFilename,
+      externalCaseId: `pathoweb:${ocrResult.caseBase}`,
+      externalCaseBase: ocrResult.caseBase,
+      externalSlideLabel: ocrResult.fullName,
+      ocrStatus: 'done',
+    });
+
+    // Re-emit SlideRegistered outbox event if tilegen is done
+    const slideRow = await query(
+      'SELECT width, height, mpp, tilegen_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+      [slideId]
+    );
+    const s = slideRow.rows[0];
+    if (s && s.tilegen_status === 'done') {
+      await query(
+        `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+         VALUES ($1, $2, $3, $4)`,
+        ['slide', slideId, 'registered', JSON.stringify({
+          slide_id: slideId,
+          case_id: null,
+          svs_filename: newFilename,
+          width: s.width || 0,
+          height: s.height || 0,
+          mpp: parseFloat(s.mpp) || 0,
+          external_case_id: s.external_case_id,
+          external_case_base: s.external_case_base,
+          external_slide_label: s.external_slide_label,
+        })]
+      );
+    }
+
+    return {
+      success: true,
+      ocrStatus: 'done',
+      fullName: ocrResult.fullName,
+      caseBase: ocrResult.caseBase,
+      slideLabel: ocrResult.slideLabel,
+      newFilename,
     };
   });
 
