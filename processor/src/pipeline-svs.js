@@ -136,10 +136,10 @@ async function generateSmartThumbnail(rawPath, outputPath) {
   const THUMB_H = 400;
   const THRESHOLD = 220; // pixels darker than this are "tissue"
 
-  // Step 1: Create a small overview (fit within ~1600px, no crop)
+  // Step 1: Create a small overview (fit within ~3200px, no crop)
   const overviewPath = outputPath + '.overview.jpg';
   await execAsync(
-    `vips thumbnail "${rawPath}" "${overviewPath}" 1600 --no-rotate`
+    `vips thumbnail "${rawPath}" "${overviewPath}" 3200 --no-rotate`
   );
   const overviewBuf = await sharp(overviewPath).toBuffer();
   const meta = await sharp(overviewBuf).metadata();
@@ -225,7 +225,7 @@ async function generateSmartThumbnail(rawPath, outputPath) {
     .extract({ left: bestX, top: bestY, width: effWinW, height: effWinH })
     .resize(THUMB_W, THUMB_H, { fit: 'cover' })
     .flatten({ background: { r: 255, g: 255, b: 255 } })
-    .jpeg({ quality: 85 })
+    .jpeg({ quality: 92 })
     .toFile(outputPath);
 
   // Clean up temp overview
