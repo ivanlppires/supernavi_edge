@@ -15,7 +15,9 @@
  * Pattern: [AP|PA|C|IM][6-8 digits][letter][optional digit(s)]
  */
 
-import { readFile } from 'fs/promises';
+import { readFile, access } from 'fs/promises';
+import { dirname, join } from 'path';
+import { constants } from 'fs';
 import Anthropic from '@anthropic-ai/sdk';
 
 const OCR_RESPONSE_REGEX = /^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i;
@@ -77,34 +79,7 @@ export function parseOcrResponse(text) {
   return { fullName, caseBase, slideLabel };
 }
 
-/**
- * OCR a label image and extract the case identifier.
- *
- * @param {string} imagePath - Path to label.jpg
- * @returns {Promise<{ fullName: string, caseBase: string, slideLabel: string } | null>}
- */
-export async function ocrLabel(imagePath) {
-  const imageData = await readFile(imagePath);
-  const base64 = imageData.toString('base64');
-
-  // Detect media type from extension
-  const ext = imagePath.split('.').pop().toLowerCase();
-  const mediaType = ext === 'png' ? 'image/png' : 'image/jpeg';
-
-  const response = await getClient().messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 100,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'image',
-            source: { type: 'base64', media_type: mediaType, data: base64 },
-          },
-          {
-            type: 'text',
-            text: `This is a photo of a pathology slide label. Extract the case identifier.
+const LABEL_PROMPT = `This is a photo of a pathology slide label. Extract the case identifier.
 
 The label may contain:
 - A PRINTED case number starting with AP or PA (Anatomopatológico), C (Citologia), or IM (Imuno-histoquímico), followed by 6-8 digits.
@@ -118,19 +93,100 @@ Examples of identifiers you may see:
 Ignore any other text on the label such as patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.
 
 Reply with ONLY the identifier as you read it (e.g., "AP26000388A1" or "26_388A"). No other text.
-If you cannot read the label, reply with UNREADABLE.`,
-          },
-        ],
-      },
-    ],
+If you cannot read the label, reply with UNREADABLE.`;
+
+const LABEL_WITH_SLIDE_PROMPT = `The label on this pathology slide was difficult to read. Here are TWO images:
+1. The label photo (may be blurry, damaged, or partially obscured)
+2. A thumbnail of the entire slide (may show printed text, barcodes, or markings on the glass)
+
+Extract the case identifier from EITHER image — whichever is more legible.
+
+The identifier format:
+- Starts with AP or PA (Anatomopatológico), C (Citologia), or IM (Imuno-histoquímico), followed by 6-8 digits.
+- May have a handwritten suffix: flask letter (A, B, C...) and optional slide number (1, 2, 3...).
+- May be ABBREVIATED: "26_388A" means AP26000388A (zeros suppressed with underscore).
+
+Examples:
+  Full: AP26000388A1, AP26000388B, PA26000019, C26000588A, IM26000100A2
+  Abbreviated: 26_388A, 26_388B2, 26_100A
+
+Ignore patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.
+
+Reply with ONLY the identifier (e.g., "AP26000388A1" or "26_388A"). No other text.
+If you cannot read the identifier from either image, reply with UNREADABLE.`;
+
+/**
+ * Read an image file and return base64 + media type.
+ */
+async function readImage(imagePath) {
+  const data = await readFile(imagePath);
+  const ext = imagePath.split('.').pop().toLowerCase();
+  return {
+    base64: data.toString('base64'),
+    mediaType: ext === 'png' ? 'image/png' : 'image/jpeg',
+  };
+}
+
+/**
+ * Call Claude Vision with one or more images and a prompt.
+ */
+async function callVision(images, prompt) {
+  const content = [
+    ...images.map(img => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+    })),
+    { type: 'text', text: prompt },
+  ];
+
+  const response = await getClient().messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 100,
+    messages: [{ role: 'user', content }],
   });
 
-  const rawText = response.content?.[0]?.text || '';
+  return response.content?.[0]?.text || '';
+}
+
+/**
+ * OCR a label image and extract the case identifier.
+ * Falls back to sending both label.jpg + slide.jpg if the label alone is unreadable.
+ *
+ * @param {string} imagePath - Path to label.jpg
+ * @returns {Promise<{ fullName: string, caseBase: string, slideLabel: string } | null>}
+ */
+export async function ocrLabel(imagePath) {
+  const labelImage = await readImage(imagePath);
+
+  // First attempt: label only
+  const rawText = await callVision([labelImage], LABEL_PROMPT);
   console.log(`[OCR] Raw response for ${imagePath}: "${rawText}"`);
 
-  if (rawText.trim().toUpperCase() === 'UNREADABLE') return null;
+  const isUnreadable = rawText.trim().toUpperCase() === 'UNREADABLE';
+  if (!isUnreadable) {
+    const result = parseOcrResponse(rawText);
+    if (result) return result;
+  }
 
-  return parseOcrResponse(rawText);
+  // Fallback: try with slide.jpg from same directory
+  const dsmetaDir = dirname(imagePath);
+  const slidePath = join(dsmetaDir, 'slide.jpg');
+
+  try {
+    await access(slidePath, constants.R_OK);
+  } catch {
+    console.log(`[OCR] No slide.jpg fallback available at ${slidePath}`);
+    return null;
+  }
+
+  console.log(`[OCR] Label unreadable, retrying with slide.jpg from ${dsmetaDir}`);
+  const slideImage = await readImage(slidePath);
+  const retryText = await callVision([labelImage, slideImage], LABEL_WITH_SLIDE_PROMPT);
+  console.log(`[OCR] Retry response (label+slide): "${retryText}"`);
+
+  if (retryText.trim().toUpperCase() === 'UNREADABLE') return null;
+
+  return parseOcrResponse(retryText);
 }
 
 /**
