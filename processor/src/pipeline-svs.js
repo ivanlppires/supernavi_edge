@@ -119,7 +119,7 @@ function calculateMaxLevel(width, height) {
  *
  * Falls back to vips attention crop if the smart path fails.
  */
-async function generateThumbnail(rawPath, outputPath) {
+export async function generateThumbnail(rawPath, outputPath) {
   try {
     await generateSmartThumbnail(rawPath, outputPath);
   } catch (err) {

@@ -4,7 +4,7 @@ import { stat, readFile, rm } from 'fs/promises';
 import { join } from 'path';
 import { processP0 as processImageP0 } from './pipeline-p0.js';
 import { processP1 as processImageP1 } from './pipeline-p1.js';
-import { processSVS_P0, processSVS_P1, generateFullTilePyramid, persistTilesBackground } from './pipeline-svs.js';
+import { processSVS_P0, processSVS_P1, generateFullTilePyramid, persistTilesBackground, generateThumbnail } from './pipeline-svs.js';
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 import { getConfig as getWasabiConfig, getSlidePrefix } from './preview/wasabiUploader.js';
 import { uploadSlideToCloud } from './cloud-uploader.js';
@@ -320,6 +320,19 @@ async function processJob(job) {
       // Re-publish preview for an already-processed slide
       console.log(`Re-publishing preview for ${job.slideId.substring(0, 12)}...`);
       try {
+        // Regenerate thumbnail from raw file before re-uploading
+        const db = await getPool();
+        const slideRow = await db.query('SELECT raw_path, format FROM slides WHERE id = $1', [job.slideId]);
+        const rawPath = slideRow.rows[0]?.raw_path;
+        const format = slideRow.rows[0]?.format || '';
+        const isWSI = WSI_FORMATS.includes(format.toLowerCase());
+
+        if (rawPath && isWSI) {
+          const thumbPath = join(DERIVED_DIR, job.slideId, 'thumb.jpg');
+          console.log(`  Regenerating thumbnail from ${rawPath}...`);
+          await generateThumbnail(rawPath, thumbPath);
+        }
+
         // Optionally delete marker to force re-upload
         if (job.force) {
           const markerPath = join(DERIVED_DIR, job.slideId, 'preview_published.json');
