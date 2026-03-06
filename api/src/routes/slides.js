@@ -401,17 +401,15 @@ export default async function slidesRoutes(fastify) {
       return { error: 'OCR is not enabled (ANTHROPIC_API_KEY not set)' };
     }
 
-    const labelPath = join(slide.dsmeta_path, 'label.jpg');
-
     try {
-      await access(labelPath);
+      await access(slide.dsmeta_path);
     } catch {
       reply.code(404);
-      return { error: 'Label image not found at dsmeta path' };
+      return { error: 'dsmeta directory not found' };
     }
 
     // Run OCR
-    const ocrResult = await ocrLabel(labelPath);
+    const ocrResult = await ocrLabel(slide.dsmeta_path);
 
     if (!ocrResult) {
       await updateSlideOcr(slideId, { ocrStatus: 'pending' });
