@@ -94,15 +94,14 @@ async function processNewFile(filePath) {
   let externalFields = null;
 
   const dsmetaDir = filePath + '.dsmeta';
-  const labelPath = dsmetaDir + '/label.jpg';
 
   if (isOcrEnabled()) {
     try {
-      await access(labelPath, constants.R_OK);
+      await access(dsmetaDir, constants.R_OK);
       dsmetaPath = dsmetaDir;
 
-      console.log(`[Scanner] OCR: found label at ${labelPath}`);
-      const ocrResult = await ocrLabel(labelPath);
+      console.log(`[Scanner] OCR: found dsmeta at ${dsmetaDir}`);
+      const ocrResult = await ocrLabel(dsmetaDir);
 
       if (ocrResult) {
         const newFilename = ocrResult.fullName + '.' + format;
@@ -221,10 +220,9 @@ async function retryPendingOcr() {
 
   for (const slide of pendingSlides) {
     try {
-      const labelPath = slide.dsmeta_path + '/label.jpg';
-      await access(labelPath, constants.R_OK);
+      await access(slide.dsmeta_path, constants.R_OK);
 
-      const ocrResult = await ocrLabel(labelPath);
+      const ocrResult = await ocrLabel(slide.dsmeta_path);
       if (!ocrResult) {
         console.log(`[Scanner] OCR retry still failed for ${slide.id.substring(0, 12)}`);
         continue;
