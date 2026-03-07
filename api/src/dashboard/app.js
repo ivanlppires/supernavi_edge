@@ -390,6 +390,33 @@
   // =====================
   let currentOcrSlideId = null;
 
+  // Client-side OCR parse (mirrors backend parseOcrResponse)
+  function parseOcrInput(text) {
+    if (!text || typeof text !== 'string') return null;
+    const trimmed = text.trim().toUpperCase();
+    if (!trimmed) return null;
+
+    // Abbreviated format: 26_388A → AP26000388A
+    const abbrMatch = trimmed.match(/^(\d{2})[_](\d{1,6})([A-Z]\d*)?$/i);
+    if (abbrMatch) {
+      const left = abbrMatch[1];
+      const right = abbrMatch[2];
+      const suffix = (abbrMatch[3] || '').toUpperCase();
+      const zeros = Math.max(0, 8 - left.length - right.length);
+      const caseBase = 'AP' + left + '0'.repeat(zeros) + right;
+      return { fullName: caseBase + suffix, caseBase, slideLabel: suffix };
+    }
+
+    // Standard format: AP26000388A1
+    const cleaned = trimmed.replace(/[\s\-_.]/g, '');
+    if (!cleaned) return null;
+    const match = cleaned.match(/^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i);
+    if (!match) return null;
+    const caseBase = match[1].replace(/^PA/, 'AP');
+    const slideLabel = match[2] || '';
+    return { fullName: caseBase + slideLabel, caseBase, slideLabel };
+  }
+
   function initOcrModal() {
     const overlay = $('#ocrModal');
     const closeBtn = $('#ocrModalClose');
@@ -399,19 +426,87 @@
     if (closeBtn) closeBtn.addEventListener('click', closeOcrModal);
     if (closeBtn2) closeBtn2.addEventListener('click', closeOcrModal);
 
-    // Close on overlay click (outside modal)
     if (overlay) {
       overlay.addEventListener('click', (e) => {
         if (e.target === overlay) closeOcrModal();
       });
     }
 
-    // Close on Escape key
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closeOcrModal();
     });
 
     if (reocrBtn) reocrBtn.addEventListener('click', triggerReocr);
+
+    // Image tabs
+    const tabs = overlay ? overlay.querySelectorAll('.ocr-tab') : [];
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        tabs.forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        switchOcrImage(tab.dataset.tab);
+      });
+    });
+
+    // Manual edit — live validation
+    const manualInput = $('#ocrManualInput');
+    const saveBtn = $('#btnManualSave');
+    if (manualInput) {
+      manualInput.addEventListener('input', () => {
+        const val = manualInput.value;
+        const parsed = parseOcrInput(val);
+        const preview = $('#ocrManualPreview');
+
+        if (!val.trim()) {
+          manualInput.className = 'ocr-manual-input';
+          if (preview) { preview.textContent = ''; preview.className = 'ocr-manual-preview'; }
+          if (saveBtn) saveBtn.disabled = true;
+          return;
+        }
+
+        if (parsed) {
+          manualInput.className = 'ocr-manual-input input-valid';
+          if (preview) {
+            preview.textContent = '\u2192 ' + parsed.caseBase + ' + ' + (parsed.slideLabel || '(sem sufixo)');
+            preview.className = 'ocr-manual-preview preview-valid';
+          }
+          if (saveBtn) saveBtn.disabled = false;
+        } else {
+          manualInput.className = 'ocr-manual-input input-invalid';
+          if (preview) {
+            preview.textContent = 'Formato inv\u00e1lido';
+            preview.className = 'ocr-manual-preview preview-invalid';
+          }
+          if (saveBtn) saveBtn.disabled = true;
+        }
+      });
+    }
+
+    if (saveBtn) saveBtn.addEventListener('click', triggerManualSave);
+  }
+
+  function switchOcrImage(tab) {
+    const slide2Img = $('#ocrSlide2Image');
+    const labelImg = $('#ocrLabelImage');
+    const placeholder = $('#ocrLabelPlaceholder');
+
+    if (tab === 'slide2') {
+      if (slide2Img) slide2Img.style.display = '';
+      if (labelImg) labelImg.style.display = 'none';
+      if (placeholder) placeholder.style.display = 'none';
+      if (slide2Img && slide2Img.dataset.failed === 'true') {
+        if (slide2Img) slide2Img.style.display = 'none';
+        if (placeholder) placeholder.style.display = '';
+      }
+    } else {
+      if (slide2Img) slide2Img.style.display = 'none';
+      if (labelImg) labelImg.style.display = '';
+      if (placeholder) placeholder.style.display = 'none';
+      if (labelImg && labelImg.dataset.failed === 'true') {
+        if (labelImg) labelImg.style.display = 'none';
+        if (placeholder) placeholder.style.display = '';
+      }
+    }
   }
 
   function openOcrModal(slide) {
@@ -419,18 +514,40 @@
     if (!overlay) return;
 
     currentOcrSlideId = slide.slideId;
+    const slideUrl = '/v1/slides/' + encodeURIComponent(slide.slideId);
 
-    // Set label image
-    const img = $('#ocrLabelImage');
-    const placeholder = $('#ocrLabelPlaceholder');
-    if (img) {
-      img.src = '/v1/slides/' + encodeURIComponent(slide.slideId) + '/label';
-      img.style.display = '';
-      img.onerror = function () {
-        img.style.display = 'none';
+    // Load slide2 image (primary)
+    const slide2Img = $('#ocrSlide2Image');
+    if (slide2Img) {
+      slide2Img.dataset.failed = 'false';
+      slide2Img.src = slideUrl + '/slide2';
+      slide2Img.style.display = '';
+      slide2Img.onerror = function () {
+        slide2Img.dataset.failed = 'true';
+        slide2Img.style.display = 'none';
+        const placeholder = $('#ocrLabelPlaceholder');
         if (placeholder) placeholder.style.display = '';
       };
     }
+
+    // Load label image (secondary tab)
+    const labelImg = $('#ocrLabelImage');
+    if (labelImg) {
+      labelImg.dataset.failed = 'false';
+      labelImg.src = slideUrl + '/label';
+      labelImg.style.display = 'none';
+      labelImg.onerror = function () {
+        labelImg.dataset.failed = 'true';
+      };
+    }
+
+    // Reset tabs to slide2
+    const tabs = overlay.querySelectorAll('.ocr-tab');
+    tabs.forEach(t => t.classList.remove('active'));
+    const slide2Tab = overlay.querySelector('.ocr-tab[data-tab="slide2"]');
+    if (slide2Tab) slide2Tab.classList.add('active');
+
+    const placeholder = $('#ocrLabelPlaceholder');
     if (placeholder) placeholder.style.display = 'none';
 
     // Set reading info
@@ -444,7 +561,15 @@
       statusEl.className = 'ocr-info-value ' + (slide.ocrStatus === 'done' ? 'ocr-val-done' : 'ocr-val-pending');
     }
 
-    // Clear any previous status message
+    // Pre-fill manual input
+    const manualInput = $('#ocrManualInput');
+    if (manualInput) {
+      manualInput.value = slide.externalSlideLabel || '';
+      manualInput.className = 'ocr-manual-input';
+      manualInput.dispatchEvent(new Event('input'));
+    }
+
+    // Clear status message
     const msgEl = $('#ocrStatusMsg');
     if (msgEl) {
       msgEl.textContent = '';
@@ -505,6 +630,12 @@
         }
         // Refresh slides list
         fetchSlides();
+        // Update manual input with new reading
+        const manualInput = $('#ocrManualInput');
+        if (manualInput) {
+          manualInput.value = data.fullName || '';
+          manualInput.dispatchEvent(new Event('input'));
+        }
       } else {
         if (msgEl) {
           msgEl.textContent = data.message || 'N\u00e3o foi poss\u00edvel ler o label';
@@ -521,6 +652,60 @@
         reocrBtn.disabled = false;
         reocrBtn.textContent = 'Re-ler OCR';
       }
+    }
+  }
+
+  async function triggerManualSave() {
+    if (!currentOcrSlideId) return;
+
+    const manualInput = $('#ocrManualInput');
+    const saveBtn = $('#btnManualSave');
+    const msgEl = $('#ocrStatusMsg');
+    const name = manualInput ? manualInput.value.trim() : '';
+
+    if (!name) return;
+
+    if (saveBtn) saveBtn.disabled = true;
+    if (msgEl) {
+      msgEl.textContent = 'Salvando...';
+      msgEl.className = 'ocr-status-msg loading';
+    }
+
+    try {
+      const res = await fetch('/v1/slides/' + encodeURIComponent(currentOcrSlideId) + '/rename', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setText('#ocrReading', data.fullName || '--');
+        setText('#ocrFilename', data.newFilename || '--');
+        const statusEl = $('#ocrStatusValue');
+        if (statusEl) {
+          statusEl.textContent = 'Conclu\u00eddo';
+          statusEl.className = 'ocr-info-value ocr-val-done';
+        }
+        if (msgEl) {
+          msgEl.textContent = 'Nome atualizado: ' + (data.fullName || '');
+          msgEl.className = 'ocr-status-msg success';
+        }
+        fetchSlides();
+      } else {
+        if (msgEl) {
+          msgEl.textContent = data.error || 'Erro ao salvar';
+          msgEl.className = 'ocr-status-msg error';
+        }
+      }
+    } catch (err) {
+      if (msgEl) {
+        msgEl.textContent = 'Erro: ' + err.message;
+        msgEl.className = 'ocr-status-msg error';
+      }
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
     }
   }
 
