@@ -1271,7 +1271,7 @@ button:focus:not(:focus-visible) {
 .ocr-label-container {
   background: var(--bg-base);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 0 0 var(--radius) var(--radius);
   padding: 12px;
   text-align: center;
   margin-bottom: 20px;
@@ -1428,6 +1428,139 @@ button:focus:not(:focus-visible) {
   background: var(--bg-card-hover);
 }
 
+
+/* ===== OCR Image Tabs ===== */
+.ocr-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 0;
+}
+
+.ocr-tab {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ocr-tab:first-child {
+  border-radius: var(--radius-sm) 0 0 0;
+}
+
+.ocr-tab:last-child {
+  border-radius: 0 var(--radius-sm) 0 0;
+}
+
+.ocr-tab.active {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  border-color: var(--border);
+}
+
+.ocr-tab:not(.active):hover {
+  color: var(--text-secondary);
+  background: var(--bg-card-hover);
+}
+
+/* ===== OCR Manual Edit ===== */
+.ocr-manual-edit {
+  margin-bottom: 16px;
+}
+
+.ocr-manual-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.ocr-manual-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.ocr-manual-input {
+  flex: 1;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 12px;
+  letter-spacing: 0.02em;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.ocr-manual-input:focus {
+  border-color: var(--accent);
+}
+
+.ocr-manual-input.input-valid {
+  border-color: var(--green);
+}
+
+.ocr-manual-input.input-invalid {
+  border-color: var(--red);
+}
+
+.btn-manual-save {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid rgba(34, 197, 94, 0.15);
+  font-size: 16px;
+  font-weight: 700;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.btn-manual-save:hover:not(:disabled) {
+  background: var(--green);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.3);
+}
+
+.btn-manual-save:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.ocr-manual-preview {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  margin-top: 6px;
+  min-height: 16px;
+  letter-spacing: 0.02em;
+}
+
+.ocr-manual-preview.preview-valid {
+  color: var(--green);
+}
+
+.ocr-manual-preview.preview-invalid {
+  color: var(--red);
+}
 
 /* ===== Maintenance Section ===== */
 .maintenance-section {
