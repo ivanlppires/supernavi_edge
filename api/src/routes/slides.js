@@ -381,6 +381,29 @@ export default async function slidesRoutes(fastify) {
     }
   });
 
+  // Get slide2 overview image (from dsmeta directory)
+  fastify.get('/slides/:slideId/slide2', async (request, reply) => {
+    const { slideId } = request.params;
+    const slide = await getSlide(slideId);
+
+    if (!slide || !slide.dsmeta_path) {
+      reply.code(404);
+      return { error: 'Slide2 not found' };
+    }
+
+    const slide2Path = join(slide.dsmeta_path, 'slide2.jpg');
+
+    try {
+      await access(slide2Path);
+      reply.header('Content-Type', 'image/jpeg');
+      reply.header('Cache-Control', 'no-cache');
+      return createReadStream(slide2Path);
+    } catch {
+      reply.code(404);
+      return { error: 'Slide2 image not found' };
+    }
+  });
+
   // Trigger re-OCR for a slide's label
   fastify.post('/slides/:slideId/reocr', async (request, reply) => {
     const { slideId } = request.params;
