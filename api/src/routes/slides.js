@@ -6,7 +6,7 @@ import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteS
 import { generateTile, getPendingCount } from '../services/tilegen-svs.js';
 import { enqueueJob } from '../lib/queue.js';
 import { query } from '../db/index.js';
-import { ocrLabel, isOcrEnabled } from '../lib/label-ocr.js';
+import { ocrLabel, isOcrEnabled, parseOcrResponse } from '../lib/label-ocr.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
@@ -485,6 +485,73 @@ export default async function slidesRoutes(fastify) {
       fullName: ocrResult.fullName,
       caseBase: ocrResult.caseBase,
       slideLabel: ocrResult.slideLabel,
+      newFilename,
+    };
+  });
+
+  // Manual rename: technician manually sets the slide name
+  fastify.post('/slides/:slideId/rename', async (request, reply) => {
+    const { name } = request.body || {};
+
+    if (!name || typeof name !== 'string') {
+      reply.code(400);
+      return { error: 'Missing or invalid "name" field' };
+    }
+
+    const { slideId } = request.params;
+    const slide = await getSlide(slideId);
+    if (!slide) {
+      reply.code(404);
+      return { error: 'Slide not found' };
+    }
+
+    const parsed = parseOcrResponse(name.trim());
+    if (!parsed) {
+      reply.code(400);
+      return { error: 'Invalid format. Expected: AP26000388A1, C26000588A, 26_388A, etc.' };
+    }
+
+    const format = slide.format || 'svs';
+    const newFilename = parsed.fullName + '.' + format;
+
+    await updateSlideOcr(slideId, {
+      originalFilename: newFilename,
+      externalCaseId: `pathoweb:${parsed.caseBase}`,
+      externalCaseBase: parsed.caseBase,
+      externalSlideLabel: parsed.fullName,
+      ocrStatus: 'done',
+    });
+
+    // Re-emit SlideRegistered outbox event if tilegen is done
+    const slideRow = await query(
+      'SELECT width, height, mpp, tilegen_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+      [slideId]
+    );
+    const s = slideRow.rows[0];
+    if (s && s.tilegen_status === 'done') {
+      await query(
+        `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+         VALUES ($1, $2, $3, $4)`,
+        ['slide', slideId, 'registered', JSON.stringify({
+          slide_id: slideId,
+          case_id: null,
+          svs_filename: newFilename,
+          width: s.width || 0,
+          height: s.height || 0,
+          mpp: parseFloat(s.mpp) || 0,
+          external_case_id: s.external_case_id,
+          external_case_base: s.external_case_base,
+          external_slide_label: s.external_slide_label,
+        })]
+      );
+    }
+
+    return {
+      success: true,
+      ocrStatus: 'done',
+      fullName: parsed.fullName,
+      caseBase: parsed.caseBase,
+      slideLabel: parsed.slideLabel,
       newFilename,
     };
   });
