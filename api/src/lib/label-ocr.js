@@ -25,9 +25,34 @@ import Anthropic from '@anthropic-ai/sdk';
 
 const OCR_RESPONSE_REGEX = /^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i;
 
-// Abbreviated format: digits_digits + optional suffix (e.g., 26_388A, 26_388B2)
-// The underscore replaces suppressed zeros: 26_388 → 26000388
-const ABBREVIATED_REGEX = /^(\d{2})[_](\d{1,6})([A-Z]\d*)?$/i;
+// Abbreviated format: digits[-_]digits + optional suffix (e.g., 26_388A, 96-621)
+// The separator (underscore or hyphen) replaces suppressed zeros: 26_388 → 26000388
+const ABBREVIATED_REGEX = /^(\d{2})[-_](\d{1,6})([A-Z]\d*)?$/i;
+
+// Common handwritten digit misreads: 2↔9 (curved 2 looks like 9)
+const DIGIT_CORRECTIONS = { '9': '2', '2': '9' };
+
+/**
+ * Correct the year part of abbreviated format when it's outside a plausible range.
+ * Pathology slides use YY (2-digit year). Valid range: 20–current year.
+ * If the OCR'd year is implausible, try common digit substitutions.
+ */
+function correctYear(yearStr) {
+  const currentYear = new Date().getFullYear() % 100; // e.g., 26
+  const year = parseInt(yearStr, 10);
+  if (year >= 20 && year <= currentYear) return yearStr;
+
+  // Try correcting each digit with common misreads
+  for (let i = 0; i < yearStr.length; i++) {
+    const replacement = DIGIT_CORRECTIONS[yearStr[i]];
+    if (!replacement) continue;
+    const candidate = yearStr.substring(0, i) + replacement + yearStr.substring(i + 1);
+    const candidateYear = parseInt(candidate, 10);
+    if (candidateYear >= 20 && candidateYear <= currentYear) return candidate;
+  }
+
+  return yearStr; // no correction found, keep original
+}
 
 let client = null;
 
@@ -56,7 +81,7 @@ export function parseOcrResponse(text) {
   const abbrMatch = trimmed.match(ABBREVIATED_REGEX);
   if (abbrMatch) {
     const prefix = 'AP'; // default to AP unless explicitly IM
-    const left = abbrMatch[1];                     // e.g., "26"
+    const left = correctYear(abbrMatch[1]);        // e.g., "96" → "26"
     const right = abbrMatch[2];                    // e.g., "388"
     const suffix = (abbrMatch[3] || '').toUpperCase(); // e.g., "A"
     // Pad with zeros between left and right to reach 8 digits total
@@ -87,15 +112,17 @@ const LABEL_PROMPT = `This is a photo of a pathology slide label. Extract the ca
 The label may contain:
 - A PRINTED case number starting with AP or PA (Anatomopatológico), C (Citologia), or IM (Imuno-histoquímico), followed by 6-8 digits.
 - A HANDWRITTEN suffix indicating flask (A, B, C...) and optionally slide number (1, 2, 3...).
-- Sometimes the label is ABBREVIATED with handwriting: "26_388A" means AP26000388A (zeros suppressed with underscore).
+- Sometimes the label is ABBREVIATED with handwriting: "26-388A" or "26_388A" means AP26000388A (zeros suppressed, separator is hyphen or underscore).
+
+IMPORTANT: The first two digits are the YEAR. Current year is ${new Date().getFullYear()} (abbreviated: ${String(new Date().getFullYear()).slice(-2)}). Handwritten "2" often looks like "9" — if you see what looks like "96", it is almost certainly "26".
 
 Examples of identifiers you may see:
   Full: AP26000388A1, AP26000388B, PA26000019, C26000588A, IM26000100A2
-  Abbreviated: 26_388A, 26_388B2, 26_100A (write exactly as seen, e.g. "26_388A")
+  Abbreviated: 26-388A, 26_388B2, 26-621, 26_100A
 
 Ignore any other text on the label such as patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.
 
-Reply with ONLY the identifier as you read it (e.g., "AP26000388A1" or "26_388A"). No other text.
+Reply with ONLY the identifier as you read it (e.g., "AP26000388A1" or "26-388A"). No other text.
 If you cannot read the label, reply with UNREADABLE.`;
 
 const SLIDE_OVERVIEW_PROMPT = `This is a photo of an entire pathology slide. The case identifier is usually HANDWRITTEN on the TOP PORTION of the slide (the label area).
@@ -105,15 +132,17 @@ Look at the upper part of the image to find the identifier.
 The identifier format:
 - Starts with AP or PA (Anatomopatológico), C (Citologia), or IM (Imuno-histoquímico), followed by 6-8 digits.
 - May have a handwritten suffix: flask letter (A, B, C...) and optional slide number (1, 2, 3...).
-- May be ABBREVIATED: "26_388A" means AP26000388A (zeros suppressed with underscore).
+- May be ABBREVIATED: "26-388A" or "26_388A" means AP26000388A (zeros suppressed, separator is hyphen or underscore).
+
+IMPORTANT: The first two digits are the YEAR. Current year is ${new Date().getFullYear()} (abbreviated: ${String(new Date().getFullYear()).slice(-2)}). Handwritten "2" often looks like "9" — if you see what looks like "96", it is almost certainly "26".
 
 Examples:
   Full: AP26000388A1, AP26000388B, PA26000019, C26000588A, IM26000100A2
-  Abbreviated: 26_388A, 26_388B2, 26_100A (write exactly as seen, e.g. "26_388A")
+  Abbreviated: 26-388A, 26_388B2, 26-621, 26_100A
 
 Ignore patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.
 
-Reply with ONLY the identifier (e.g., "AP26000388A1" or "26_388A"). No other text.
+Reply with ONLY the identifier (e.g., "AP26000388A1" or "26-388A"). No other text.
 If you cannot read the identifier, reply with UNREADABLE.`;
 
 const LABEL_WITH_SLIDE_PROMPT = `The label on this pathology slide was difficult to read. Here are TWO images:
@@ -125,15 +154,17 @@ Extract the case identifier from EITHER image — whichever is more legible.
 The identifier format:
 - Starts with AP or PA (Anatomopatológico), C (Citologia), or IM (Imuno-histoquímico), followed by 6-8 digits.
 - May have a handwritten suffix: flask letter (A, B, C...) and optional slide number (1, 2, 3...).
-- May be ABBREVIATED: "26_388A" means AP26000388A (zeros suppressed with underscore).
+- May be ABBREVIATED: "26-388A" or "26_388A" means AP26000388A (zeros suppressed, separator is hyphen or underscore).
+
+IMPORTANT: The first two digits are the YEAR. Current year is ${new Date().getFullYear()} (abbreviated: ${String(new Date().getFullYear()).slice(-2)}). Handwritten "2" often looks like "9" — if you see what looks like "96", it is almost certainly "26".
 
 Examples:
   Full: AP26000388A1, AP26000388B, PA26000019, C26000588A, IM26000100A2
-  Abbreviated: 26_388A, 26_388B2, 26_100A
+  Abbreviated: 26-388A, 26_388B2, 26-621, 26_100A
 
 Ignore patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.
 
-Reply with ONLY the identifier (e.g., "AP26000388A1" or "26_388A"). No other text.
+Reply with ONLY the identifier (e.g., "AP26000388A1" or "26-388A"). No other text.
 If you cannot read the identifier from either image, reply with UNREADABLE.`;
 
 /**

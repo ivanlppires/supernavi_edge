@@ -19,6 +19,10 @@ const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 let redis = null;
 let pool = null;
 
+// Track background persist promise so we can await it before the next TILEGEN.
+// This prevents tmpfs overflow: only 1 slide's tiles in hot at a time.
+let pendingPersist = null;
+
 // Formats that use the SVS/WSI pipeline
 const WSI_FORMATS = ['svs', 'tiff', 'ndpi', 'mrxs'];
 
@@ -363,6 +367,16 @@ async function processJob(job) {
       // Note: PREVIEW_REPUBLISH jobs don't have a database job record
     } else if (job.type === 'TILEGEN') {
       // Full tile pyramid generation using vips dzsave
+
+      // Ensure previous slide's tiles have been persisted and cleaned from tmpfs.
+      // Without this, tiles accumulate in the 2GB tmpfs causing "No space left on device".
+      if (pendingPersist) {
+        console.log(`[TILEGEN] Waiting for previous tile persistence to free tmpfs...`);
+        await pendingPersist;
+        pendingPersist = null;
+        console.log(`[TILEGEN] Previous tiles persisted, tmpfs clear.`);
+      }
+
       await updateSlide(job.slideId, { tilegen_status: 'running' });
       await updateJob(job.jobId, { status: 'running' });
 
@@ -516,13 +530,20 @@ async function processJob(job) {
         }
 
         // Persist hot tiles to bind-mount storage AFTER cloud upload completes.
-        // This must run after upload because persist deletes the hot tiles (tmpfs).
-        persistTilesBackground(job.slideId).catch(err => {
-          console.error(`[PERSIST] Failed for ${job.slideId.substring(0, 12)}: ${err.message}`);
-        });
+        // Skip if tiles were written directly to NTFS (oversized slide fallback).
+        if (result.persistent) {
+          console.log(`[TILEGEN] Tiles already on persistent storage (NTFS direct), skipping persist step.`);
+        } else {
+          // Track the promise so the NEXT TILEGEN waits for cleanup before starting.
+          pendingPersist = persistTilesBackground(job.slideId);
+          pendingPersist.catch(err => {
+            console.error(`[PERSIST] Failed for ${job.slideId.substring(0, 12)}: ${err.message}`);
+          });
+        }
       } catch (tilegenErr) {
         console.error(`TILEGEN failed for ${job.slideId.substring(0, 12)}: ${tilegenErr.message}`);
-        await updateSlide(job.slideId, { tilegen_status: 'failed' });
+        // Restore status to 'ready' — P0 completed, tiles served on-demand until retry
+        await updateSlide(job.slideId, { tilegen_status: 'failed', status: 'ready' });
         await updateJob(job.jobId, { status: 'failed', error: tilegenErr.message });
       }
     }
@@ -531,6 +552,47 @@ async function processJob(job) {
     console.error(err.stack);
     await updateJob(job.jobId, { status: 'failed', error: err.message });
     await updateSlide(job.slideId, { status: 'failed' });
+  }
+}
+
+/**
+ * Re-queue TILEGEN for slides that failed (e.g., tmpfs overflow).
+ * Called once at startup so failed slides are automatically retried.
+ */
+async function retryFailedTilegen() {
+  try {
+    const result = await getPool().query(
+      `SELECT id, raw_path, format, max_level FROM slides WHERE tilegen_status IN ('failed', 'queued', 'running')`
+    );
+    if (result.rows.length === 0) return;
+
+    console.log(`[RETRY] Found ${result.rows.length} slides with failed TILEGEN, re-queuing...`);
+
+    for (const slide of result.rows) {
+      // Verify raw file still exists
+      try {
+        await stat(slide.raw_path);
+      } catch {
+        console.log(`[RETRY] Skipping ${slide.id.substring(0, 12)}: raw file missing`);
+        continue;
+      }
+
+      const jobId = await createJob(slide.id, 'TILEGEN');
+      if (jobId) {
+        await updateSlide(slide.id, { tilegen_status: 'queued' });
+        await enqueueJob({
+          jobId,
+          slideId: slide.id,
+          type: 'TILEGEN',
+          rawPath: slide.raw_path,
+          format: slide.format,
+          maxLevel: slide.max_level,
+        });
+        console.log(`[RETRY] Re-queued TILEGEN for ${slide.id.substring(0, 12)}`);
+      }
+    }
+  } catch (err) {
+    console.error(`[RETRY] Failed to retry TILEGEN jobs: ${err.message}`);
   }
 }
 
@@ -551,6 +613,9 @@ async function worker() {
       await new Promise(r => setTimeout(r, 2000));
     }
   }
+
+  // Retry any previously failed TILEGEN jobs
+  await retryFailedTilegen();
 
   console.log('Worker ready, waiting for jobs...');
 

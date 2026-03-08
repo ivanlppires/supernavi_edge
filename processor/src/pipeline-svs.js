@@ -313,39 +313,70 @@ const TILEGEN_TIMEOUT_MS = parseInt(process.env.TILEGEN_TIMEOUT_MS || '600000', 
  * 2. Tiles immediately available via hot path (/data/tiles_hot)
  * 3. Background copy to persistent storage (bind mount, slow but non-blocking)
  *
+ * Fallback: If tmpfs overflows (slide too large for 2GB RAM), dzsave writes
+ * directly to persistent NTFS storage. Slower but handles any slide size.
+ *
  * The API checks tiles_hot first, then persistent tiles, then on-demand.
+ *
+ * Returns { tileCount, elapsed, persistent } where persistent=true means
+ * tiles are already on NTFS (no persistTilesBackground needed).
  */
 export async function generateFullTilePyramid(slideId, rawPath) {
+  const startTime = Date.now();
+
+  console.log(`[TILEGEN] Starting vips dzsave for ${slideId.substring(0, 12)} (Q=${TILE_JPEG_QUALITY}, VIPS_CONCURRENCY=${process.env.VIPS_CONCURRENCY || 'auto'})`);
+
+  // Safety net: clean stale hot tiles from other slides (e.g., after crash/restart)
+  try {
+    const hotDirs = await readdir(TILES_HOT_DIR);
+    for (const dir of hotDirs) {
+      if (dir === slideId) continue;
+      const persistedTiles = join(DERIVED_DIR, dir, 'tiles');
+      const hasPersisted = await access(persistedTiles).then(() => true).catch(() => false);
+      if (hasPersisted) {
+        await execAsync(`rm -rf "${join(TILES_HOT_DIR, dir)}"`).catch(() => {});
+        console.log(`[TILEGEN] Cleaned stale hot tiles for ${dir.substring(0, 12)} (already persisted)`);
+      }
+    }
+  } catch { /* empty tmpfs, nothing to clean */ }
+
+  // Try fast path: dzsave to tmpfs
+  try {
+    const result = await dzsaveToTmpfs(slideId, rawPath, startTime);
+    return { ...result, persistent: false };
+  } catch (err) {
+    if (!err.message.includes('No space left on device')) {
+      throw err; // Non-space errors are real failures
+    }
+    console.warn(`[TILEGEN] tmpfs overflow for ${slideId.substring(0, 12)}, falling back to direct NTFS write (slower)...`);
+  }
+
+  // Fallback: dzsave directly to persistent NTFS storage
+  const result = await dzsaveToPersistent(slideId, rawPath, startTime);
+  return { ...result, persistent: true };
+}
+
+/**
+ * Fast path: dzsave to tmpfs (RAM-backed).
+ */
+async function dzsaveToTmpfs(slideId, rawPath, startTime) {
   const hotSlideDir = join(TILES_HOT_DIR, slideId);
   const hotTmpOutput = join(hotSlideDir, 'dz');
   const hotDzsaveOutput = join(hotSlideDir, 'dz_files');
   const hotTilesDir = join(hotSlideDir, 'tiles');
-  const startTime = Date.now();
-
-  console.log(`[TILEGEN] Starting vips dzsave for ${slideId.substring(0, 12)} (Q=${TILE_JPEG_QUALITY}, VIPS_CONCURRENCY=${process.env.VIPS_CONCURRENCY || 'auto'})`);
 
   // Clean previous residue from tmpfs
   await execAsync(`rm -rf "${hotSlideDir}"`).catch(() => {});
   await mkdir(hotSlideDir, { recursive: true });
 
   try {
-    // Phase 1: dzsave to tmpfs (RAM-backed, blazing fast)
     const cmd = `vips dzsave "${rawPath}" "${hotTmpOutput}" --suffix .jpg[Q=${TILE_JPEG_QUALITY}] --tile-size ${TILE_SIZE} --overlap ${TILE_OVERLAP}`;
     await execAsync(cmd, { timeout: TILEGEN_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 });
 
-    // Count generated tiles
-    let tileCount = 0;
-    const levelDirs = await readdir(hotDzsaveOutput);
-    for (const dir of levelDirs) {
-      if (/^\d+$/.test(dir)) {
-        const files = await readdir(join(hotDzsaveOutput, dir));
-        tileCount += files.filter(f => f.endsWith('.jpg')).length;
-      }
-    }
+    const tileCount = await countTilesInDir(hotDzsaveOutput);
 
     // Rename dz_files → tiles (atomic, same tmpfs filesystem)
     await rename(hotDzsaveOutput, hotTilesDir);
-    // Clean dz.dzi metadata file
     await unlink(join(hotSlideDir, 'dz.dzi')).catch(() => {});
 
     const elapsed = Date.now() - startTime;
@@ -356,6 +387,57 @@ export async function generateFullTilePyramid(slideId, rawPath) {
     await execAsync(`rm -rf "${hotSlideDir}"`).catch(() => {});
     throw err;
   }
+}
+
+/**
+ * Slow fallback: dzsave directly to persistent NTFS bind mount.
+ * Used when slide tiles exceed tmpfs capacity.
+ * Uses spawnAsync (no maxBuffer limit) with extended timeout.
+ */
+async function dzsaveToPersistent(slideId, rawPath, startTime) {
+  const slideDir = join(DERIVED_DIR, slideId);
+  const dzOutput = join(slideDir, '.dzsave_direct');
+  const dzFilesDir = join(slideDir, '.dzsave_direct_files');
+  const persistDir = join(slideDir, 'tiles');
+
+  // Clean any previous residue
+  await execAsync(`rm -rf "${persistDir}" "${dzOutput}" "${dzFilesDir}" "${dzOutput}.dzi"`).catch(() => {});
+  await mkdir(slideDir, { recursive: true });
+
+  try {
+    const cmd = `vips dzsave "${rawPath}" "${dzOutput}" --suffix .jpg[Q=${TILE_JPEG_QUALITY}] --tile-size ${TILE_SIZE} --overlap ${TILE_OVERLAP}`;
+    // Extended timeout for NTFS writes (up to 2 hours for very large slides)
+    await spawnAsync(cmd, { timeout: 2 * 60 * 60 * 1000 });
+
+    const tileCount = await countTilesInDir(dzFilesDir);
+
+    // Rename dzsave_direct_files → tiles
+    await rename(dzFilesDir, persistDir);
+    await unlink(join(slideDir, '.dzsave_direct.dzi')).catch(() => {});
+
+    const elapsed = Date.now() - startTime;
+    console.log(`[TILEGEN] Tiles written directly to NTFS: ${tileCount} tiles in ${elapsed}ms (${slideId.substring(0, 12)})`);
+
+    return { tileCount, elapsed };
+  } catch (err) {
+    await execAsync(`rm -rf "${dzFilesDir}" "${dzOutput}.dzi"`).catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Count .jpg tiles across all level directories in a dzsave output.
+ */
+async function countTilesInDir(dzsaveOutputDir) {
+  let tileCount = 0;
+  const levelDirs = await readdir(dzsaveOutputDir);
+  for (const dir of levelDirs) {
+    if (/^\d+$/.test(dir)) {
+      const files = await readdir(join(dzsaveOutputDir, dir));
+      tileCount += files.filter(f => f.endsWith('.jpg')).length;
+    }
+  }
+  return tileCount;
 }
 
 /**

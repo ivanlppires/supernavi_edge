@@ -135,4 +135,51 @@ describe('parseOcrResponse', () => {
       slideLabel: 'A',
     });
   });
+
+  // Hyphen-separated abbreviated format (handwritten labels)
+  it('expands hyphen-separated 26-621 to AP26000621', () => {
+    const result = parseOcrResponse('26-621');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000621',
+      caseBase: 'AP26000621',
+      slideLabel: '',
+    });
+  });
+
+  it('expands hyphen-separated with suffix 26-388A to AP26000388A', () => {
+    const result = parseOcrResponse('26-388A');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000388A',
+      caseBase: 'AP26000388',
+      slideLabel: 'A',
+    });
+  });
+
+  // Year correction: handwritten "2" misread as "9"
+  it('corrects misread year 96→26 in 96-621', () => {
+    const result = parseOcrResponse('96-621');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000621',
+      caseBase: 'AP26000621',
+      slideLabel: '',
+    });
+  });
+
+  it('corrects misread year 96→26 in 96_388A', () => {
+    const result = parseOcrResponse('96_388A');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP26000388A',
+      caseBase: 'AP26000388',
+      slideLabel: 'A',
+    });
+  });
+
+  it('keeps valid year 24 as-is', () => {
+    const result = parseOcrResponse('24-500');
+    assert.deepStrictEqual(result, {
+      fullName: 'AP24000500',
+      caseBase: 'AP24000500',
+      slideLabel: '',
+    });
+  });
 });

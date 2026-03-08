@@ -291,48 +291,56 @@
     <div class="ocr-modal">
       <div class="ocr-modal-header">
         <h2 class="ocr-modal-title">Verifica&ccedil;&atilde;o OCR</h2>
+        <div class="ocr-nav">
+          <button class="ocr-nav-btn" id="ocrPrev" aria-label="Anterior">&#9664;</button>
+          <span class="ocr-nav-counter" id="ocrNavCounter">1 / 1</span>
+          <button class="ocr-nav-btn" id="ocrNext" aria-label="Pr&oacute;xima">&#9654;</button>
+        </div>
         <button class="ocr-modal-close" id="ocrModalClose" aria-label="Fechar">&times;</button>
       </div>
-      <div class="ocr-modal-body">
-        <!-- Image tabs -->
-        <div class="ocr-tabs">
-          <button class="ocr-tab active" data-tab="slide2">L&acirc;mina</button>
-          <button class="ocr-tab" data-tab="label">Label</button>
-        </div>
-        <div class="ocr-label-container">
-          <img class="ocr-label-image" id="ocrSlide2Image" alt="Vis&atilde;o geral da l&acirc;mina">
-          <img class="ocr-label-image" id="ocrLabelImage" alt="Label da l&acirc;mina" style="display:none">
-          <div class="ocr-label-placeholder" id="ocrLabelPlaceholder" style="display:none">Imagem n&atilde;o dispon&iacute;vel</div>
-        </div>
-        <!-- Info rows -->
-        <div class="ocr-info">
-          <div class="ocr-info-row">
-            <span class="ocr-info-label">Leitura OCR</span>
-            <span class="ocr-info-value" id="ocrReading">--</span>
+      <div class="ocr-modal-columns">
+        <!-- Left column: images -->
+        <div class="ocr-col-left">
+          <div class="ocr-tabs">
+            <button class="ocr-tab active" data-tab="slide2">L&acirc;mina</button>
+            <button class="ocr-tab" data-tab="label">Label</button>
           </div>
-          <div class="ocr-info-row">
-            <span class="ocr-info-label">Arquivo</span>
-            <span class="ocr-info-value ocr-filename-value" id="ocrFilename">--</span>
-          </div>
-          <div class="ocr-info-row">
-            <span class="ocr-info-label">Status</span>
-            <span class="ocr-info-value" id="ocrStatusValue">--</span>
+          <div class="ocr-label-container">
+            <img class="ocr-label-image" id="ocrSlide2Image" alt="Vis&atilde;o geral da l&acirc;mina">
+            <img class="ocr-label-image" id="ocrLabelImage" alt="Label da l&acirc;mina" style="display:none">
+            <div class="ocr-label-placeholder" id="ocrLabelPlaceholder" style="display:none">Imagem n&atilde;o dispon&iacute;vel</div>
           </div>
         </div>
-        <!-- Manual edit -->
-        <div class="ocr-manual-edit">
-          <label class="ocr-manual-label">Corrigir manualmente:</label>
-          <div class="ocr-manual-input-row">
-            <input type="text" class="ocr-manual-input" id="ocrManualInput" placeholder="AP26000388A1 ou 26_388A" autocomplete="off" spellcheck="false">
-            <button class="btn-manual-save" id="btnManualSave" disabled title="Salvar">&#10003;</button>
+        <!-- Right column: info + actions -->
+        <div class="ocr-col-right">
+          <div class="ocr-info">
+            <div class="ocr-info-row">
+              <span class="ocr-info-label">Leitura OCR</span>
+              <span class="ocr-info-value" id="ocrReading">--</span>
+            </div>
+            <div class="ocr-info-row">
+              <span class="ocr-info-label">Arquivo</span>
+              <span class="ocr-info-value ocr-filename-value" id="ocrFilename">--</span>
+            </div>
+            <div class="ocr-info-row">
+              <span class="ocr-info-label">Status</span>
+              <span class="ocr-info-value" id="ocrStatusValue">--</span>
+            </div>
           </div>
-          <div class="ocr-manual-preview" id="ocrManualPreview"></div>
+          <div class="ocr-manual-edit">
+            <label class="ocr-manual-label">Corrigir manualmente:</label>
+            <div class="ocr-manual-input-row">
+              <input type="text" class="ocr-manual-input" id="ocrManualInput" placeholder="AP26000388A1 ou 26-388A" autocomplete="off" spellcheck="false">
+              <button class="btn-manual-save" id="btnManualSave" disabled title="Salvar">&#10003;</button>
+            </div>
+            <div class="ocr-manual-preview" id="ocrManualPreview"></div>
+          </div>
+          <div class="ocr-status-msg" id="ocrStatusMsg"></div>
+          <div class="ocr-modal-footer">
+            <button class="btn-reocr" id="btnReocr">Re-ler OCR</button>
+            <button class="btn-close-modal" id="btnCloseOcr">Fechar</button>
+          </div>
         </div>
-        <div class="ocr-status-msg" id="ocrStatusMsg"></div>
-      </div>
-      <div class="ocr-modal-footer">
-        <button class="btn-reocr" id="btnReocr">Re-ler OCR</button>
-        <button class="btn-close-modal" id="btnCloseOcr">Fechar</button>
       </div>
     </div>
   </div>

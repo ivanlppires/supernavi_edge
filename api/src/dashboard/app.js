@@ -389,6 +389,8 @@
   //  OCR Review Modal
   // =====================
   let currentOcrSlideId = null;
+  let ocrSlidesList = [];
+  let ocrCurrentIndex = -1;
 
   // Client-side OCR parse (mirrors backend parseOcrResponse)
   function parseOcrInput(text) {
@@ -396,12 +398,25 @@
     const trimmed = text.trim().toUpperCase();
     if (!trimmed) return null;
 
-    // Abbreviated format: 26_388A → AP26000388A
-    const abbrMatch = trimmed.match(/^(\d{2})[_](\d{1,6})([A-Z]\d*)?$/i);
+    // Abbreviated format: 26_388A or 26-388A → AP26000388A
+    const abbrMatch = trimmed.match(/^(\d{2})[-_](\d{1,6})([A-Z]\d*)?$/i);
     if (abbrMatch) {
-      const left = abbrMatch[1];
+      let left = abbrMatch[1];
       const right = abbrMatch[2];
       const suffix = (abbrMatch[3] || '').toUpperCase();
+      // Year correction: 9↔2 (handwritten misread)
+      const currentYY = new Date().getFullYear() % 100;
+      const yr = parseInt(left, 10);
+      if (yr < 20 || yr > currentYY) {
+        const corrections = { '9': '2', '2': '9' };
+        for (let i = 0; i < left.length; i++) {
+          const r = corrections[left[i]];
+          if (!r) continue;
+          const c = left.substring(0, i) + r + left.substring(i + 1);
+          const cy = parseInt(c, 10);
+          if (cy >= 20 && cy <= currentYY) { left = c; break; }
+        }
+      }
       const zeros = Math.max(0, 8 - left.length - right.length);
       const caseBase = 'AP' + left + '0'.repeat(zeros) + right;
       return { fullName: caseBase + suffix, caseBase, slideLabel: suffix };
@@ -422,6 +437,8 @@
     const closeBtn = $('#ocrModalClose');
     const closeBtn2 = $('#btnCloseOcr');
     const reocrBtn = $('#btnReocr');
+    const prevBtn = $('#ocrPrev');
+    const nextBtn = $('#ocrNext');
 
     if (closeBtn) closeBtn.addEventListener('click', closeOcrModal);
     if (closeBtn2) closeBtn2.addEventListener('click', closeOcrModal);
@@ -433,10 +450,15 @@
     }
 
     document.addEventListener('keydown', (e) => {
+      if (!currentOcrSlideId) return;
       if (e.key === 'Escape') closeOcrModal();
+      if (e.key === 'ArrowLeft') navigateOcrSlide(-1);
+      if (e.key === 'ArrowRight') navigateOcrSlide(1);
     });
 
     if (reocrBtn) reocrBtn.addEventListener('click', triggerReocr);
+    if (prevBtn) prevBtn.addEventListener('click', () => navigateOcrSlide(-1));
+    if (nextBtn) nextBtn.addEventListener('click', () => navigateOcrSlide(1));
 
     // Image tabs
     const tabs = overlay ? overlay.querySelectorAll('.ocr-tab') : [];
@@ -480,6 +502,11 @@
           if (saveBtn) saveBtn.disabled = true;
         }
       });
+
+      // Prevent arrow keys from navigating slides when typing
+      manualInput.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') e.stopPropagation();
+      });
     }
 
     if (saveBtn) saveBtn.addEventListener('click', triggerManualSave);
@@ -513,8 +540,20 @@
     const overlay = $('#ocrModal');
     if (!overlay) return;
 
+    // Build navigation list (slides with labels)
+    ocrSlidesList = slidesData.filter(s => s.hasLabel);
+    ocrCurrentIndex = ocrSlidesList.findIndex(s => s.slideId === slide.slideId);
+    if (ocrCurrentIndex === -1) {
+      // Slide not in filtered list — add it temporarily
+      ocrSlidesList = [slide];
+      ocrCurrentIndex = 0;
+    }
+
     currentOcrSlideId = slide.slideId;
     const slideUrl = '/v1/slides/' + encodeURIComponent(slide.slideId);
+
+    // Update navigation counter and buttons
+    updateOcrNav();
 
     // Load slide2 image (primary)
     const slide2Img = $('#ocrSlide2Image');
@@ -586,10 +625,31 @@
     overlay.classList.add('visible');
   }
 
+  function updateOcrNav() {
+    const counter = $('#ocrNavCounter');
+    const prevBtn = $('#ocrPrev');
+    const nextBtn = $('#ocrNext');
+
+    if (counter) counter.textContent = (ocrCurrentIndex + 1) + ' / ' + ocrSlidesList.length;
+    if (prevBtn) prevBtn.disabled = ocrCurrentIndex <= 0;
+    if (nextBtn) nextBtn.disabled = ocrCurrentIndex >= ocrSlidesList.length - 1;
+  }
+
+  function navigateOcrSlide(delta) {
+    const newIndex = ocrCurrentIndex + delta;
+    if (newIndex < 0 || newIndex >= ocrSlidesList.length) return;
+    // Use fresh data from slidesData if available
+    const target = ocrSlidesList[newIndex];
+    const fresh = slidesData.find(s => s.slideId === target.slideId);
+    openOcrModal(fresh || target);
+  }
+
   function closeOcrModal() {
     const overlay = $('#ocrModal');
     if (overlay) overlay.classList.remove('visible');
     currentOcrSlideId = null;
+    ocrSlidesList = [];
+    ocrCurrentIndex = -1;
   }
 
   async function triggerReocr() {
