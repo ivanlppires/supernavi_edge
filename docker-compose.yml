@@ -98,6 +98,14 @@ services:
       UPLOAD_CONCURRENCY: ${UPLOAD_CONCURRENCY:-64}
       ARCHIVE_PART_SIZE_MB: ${ARCHIVE_PART_SIZE_MB:-20}
       ARCHIVE_QUEUE_SIZE: ${ARCHIVE_QUEUE_SIZE:-8}
+
+      # BigTIFF pipeline (replaces DZI when enabled)
+      EDGE_PIPELINE_MODE: ${EDGE_PIPELINE_MODE:-legacy_dzi}
+      BIGTIFF_TMP_DIR: /data/tmp
+      BIGTIFF_TIMEOUT_MS: ${BIGTIFF_TIMEOUT_MS:-600000}
+      BIGTIFF_TILE_SIZE: ${BIGTIFF_TILE_SIZE:-256}
+      BIGTIFF_PART_SIZE: ${BIGTIFF_PART_SIZE:-52428800}
+      BIGTIFF_PART_CONCURRENCY: ${BIGTIFF_PART_CONCURRENCY:-4}
     depends_on:
       db:
         condition: service_healthy
@@ -109,6 +117,7 @@ services:
       - ./data/raw:/data/raw:ro
       - ./data/derived:/data/derived
       - tiles_hot:/data/tiles_hot
+      - bigtiff_tmp:/data/tmp
       - ./config:/config:ro
       - ${SCANNER_DIR:-./data/scanner}:/scanner:ro
     extra_hosts:
@@ -188,6 +197,7 @@ networks:
 volumes:
   pgdata:
   redisdata:
+  bigtiff_tmp:
   tiles_hot:
     driver: local
     driver_opts:

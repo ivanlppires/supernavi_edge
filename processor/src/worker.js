@@ -8,7 +8,12 @@ import { processSVS_P0, processSVS_P1, generateFullTilePyramid, persistTilesBack
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 import { getConfig as getWasabiConfig, getSlidePrefix } from './preview/wasabiUploader.js';
 import { uploadSlideToCloud } from './cloud-uploader.js';
+import { generateBigTIFF, cleanupBigTIFF, checkDiskSpace } from './bigtiff-generator.js';
+import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
+
+// Pipeline mode: 'legacy_dzi' (default) or 'bigtiff_iiif'
+const PIPELINE_MODE = process.env.EDGE_PIPELINE_MODE || 'legacy_dzi';
 
 const { Pool } = pg;
 
@@ -246,24 +251,28 @@ async function processJob(job) {
       // NOTE: SlideRegistered outbox event is emitted after TILEGEN completes,
       // so the slide only appears in the extension when fully navigable.
 
-      // Enqueue TILEGEN job for full tile pyramid generation
+      // Enqueue post-P0 job based on pipeline mode
       if (isWSIFormat(format)) {
+        const jobType = PIPELINE_MODE === 'bigtiff_iiif' ? 'BIGTIFF' : 'TILEGEN';
         try {
-          const tilegenJobId = await createJob(job.slideId, 'TILEGEN');
-          if (tilegenJobId) {
-            await updateSlide(job.slideId, { tilegen_status: 'queued' });
+          const postP0JobId = await createJob(job.slideId, jobType);
+          if (postP0JobId) {
+            await updateSlide(job.slideId, {
+              tilegen_status: 'queued',
+              pipeline_mode: PIPELINE_MODE,
+            });
             await enqueueJob({
-              jobId: tilegenJobId,
+              jobId: postP0JobId,
               slideId: job.slideId,
-              type: 'TILEGEN',
+              type: jobType,
               rawPath: job.rawPath,
               format: format,
               maxLevel: result.maxLevel
             });
-            console.log(`Enqueued TILEGEN job for ${job.slideId.substring(0, 12)}`);
+            console.log(`Enqueued ${jobType} job for ${job.slideId.substring(0, 12)} (mode: ${PIPELINE_MODE})`);
           }
-        } catch (tilegenErr) {
-          console.error(`Failed to enqueue TILEGEN (non-fatal): ${tilegenErr.message}`);
+        } catch (enqueueErr) {
+          console.error(`Failed to enqueue ${jobType} (non-fatal): ${enqueueErr.message}`);
         }
       }
 
@@ -546,6 +555,152 @@ async function processJob(job) {
         await updateSlide(job.slideId, { tilegen_status: 'failed', status: 'ready' });
         await updateJob(job.jobId, { status: 'failed', error: tilegenErr.message });
       }
+    } else if (job.type === 'BIGTIFF') {
+      // BigTIFF pipeline: generate single pyramidal BigTIFF + upload to S3
+      await updateSlide(job.slideId, { tilegen_status: 'running', pipeline_mode: 'bigtiff_iiif' });
+      await updateJob(job.jobId, { status: 'running' });
+
+      try {
+        // Check disk space before starting
+        const freeBytes = await checkDiskSpace();
+        const freeGB = freeBytes / 1024 / 1024 / 1024;
+        if (freeGB < 5) {
+          throw new Error(`Insufficient disk space: ${freeGB.toFixed(1)} GB free (need 5+ GB)`);
+        }
+
+        // Phase 1: Generate BigTIFF
+        console.log(`[BIGTIFF] Starting pipeline for ${job.slideId.substring(0, 12)} (mode: bigtiff_iiif)`);
+        const genResult = await generateBigTIFF(job.slideId, job.rawPath);
+
+        await updateSlide(job.slideId, { bigtiff_size: genResult.size });
+
+        // Phase 2: Upload BigTIFF to S3 via presigned multipart
+        const slideRow = await getPool().query(
+          'SELECT original_filename, width, height, mpp, max_level FROM slides WHERE id = $1',
+          [job.slideId]
+        );
+        const slide = slideRow.rows[0];
+        if (!slide) throw new Error('Slide not found in DB');
+
+        const uploadResult = await uploadBigTIFF(job.slideId, genResult.path, {
+          originalFilename: slide.original_filename,
+          width: slide.width,
+          height: slide.height,
+          mpp: slide.mpp,
+          scanner: undefined,
+          maxLevel: slide.max_level,
+        });
+
+        // Phase 3: Update state
+        await updateSlide(job.slideId, {
+          tilegen_status: 'done',
+          level_ready_max: job.maxLevel,
+          s3_bigtiff_key: uploadResult.bigtiffKey || null,
+          cloud_upload_status: 'done',
+          cloud_upload_mode: 'bigtiff',
+          cloud_upload_at: new Date().toISOString(),
+        });
+        await updateJob(job.jobId, { status: 'done' });
+
+        // Phase 4: Emit SlideRegistered outbox event
+        try {
+          const slideData = await getPool().query(
+            'SELECT external_case_id, external_case_base, external_slide_label, original_filename, width, height, mpp FROM slides WHERE id = $1',
+            [job.slideId]
+          );
+          const s = slideData.rows[0];
+          if (s) {
+            await getPool().query(
+              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+               VALUES ($1, $2, $3, $4)`,
+              ['slide', job.slideId, 'registered', JSON.stringify({
+                slide_id: job.slideId,
+                case_id: null,
+                svs_filename: s.original_filename,
+                width: s.width || 0,
+                height: s.height || 0,
+                mpp: parseFloat(s.mpp) || 0,
+                external_case_id: s.external_case_id || null,
+                external_case_base: s.external_case_base || null,
+                external_slide_label: s.external_slide_label || null,
+                pipeline_mode: 'bigtiff_iiif',
+              })]
+            );
+            console.log(`[BIGTIFF] SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
+          }
+        } catch (outboxErr) {
+          console.error(`[BIGTIFF] Failed to emit SlideRegistered (non-fatal): ${outboxErr.message}`);
+        }
+
+        // Phase 5: Emit preview:published event (for cloud to know where the BigTIFF is)
+        try {
+          const wCfg = getWasabiConfig();
+          const s3Prefix = uploadResult.s3Prefix;
+          const slideData2 = await getPool().query(
+            'SELECT original_filename, width, height, mpp, max_level, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+            [job.slideId]
+          );
+          const s2 = slideData2.rows[0];
+          if (s2 && s3Prefix) {
+            await getPool().query(
+              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+               VALUES ($1, $2, $3, $4)`,
+              ['preview', `preview:${job.slideId}`, 'published', JSON.stringify({
+                slide_id: job.slideId,
+                case_id: null,
+                external_case_id: s2.external_case_id || null,
+                external_case_base: s2.external_case_base || null,
+                external_slide_label: s2.external_slide_label || null,
+                wasabi_bucket: wCfg.bucket,
+                wasabi_region: wCfg.region,
+                wasabi_endpoint: wCfg.endpoint,
+                wasabi_prefix: s3Prefix,
+                thumb_key: `${s3Prefix}thumb.jpg`,
+                manifest_key: `${s3Prefix}manifest.json`,
+                tiles_prefix: s3Prefix,
+                low_tiles_prefix: s3Prefix,
+                max_preview_level: s2.max_level,
+                preview_width: s2.width,
+                preview_height: s2.height,
+                original_width: s2.width,
+                original_height: s2.height,
+                tile_size: 256,
+                format: 'jpg',
+                pipeline_mode: 'bigtiff_iiif',
+                bigtiff_key: uploadResult.bigtiffKey,
+                bigtiff_size: uploadResult.bigtiffSize,
+                published_at: new Date().toISOString(),
+              })]
+            );
+          }
+        } catch (previewErr) {
+          console.error(`[BIGTIFF] Failed to emit preview event (non-fatal): ${previewErr.message}`);
+        }
+
+        // Restore slide status to 'ready'
+        await updateSlide(job.slideId, { status: 'ready' });
+
+        await publishEvent('bigtiff:ready', {
+          slideId: job.slideId,
+          bigtiffSize: genResult.size,
+          generationTime: genResult.elapsed,
+          uploadTime: uploadResult.elapsed,
+          totalTime: Date.now() - (Date.now() - genResult.elapsed - (uploadResult.elapsed || 0)),
+          timestamp: Date.now(),
+        });
+
+        // Phase 6: Clean up temp BigTIFF file
+        await cleanupBigTIFF(job.slideId);
+
+        const totalElapsed = genResult.elapsed + (uploadResult.elapsed || 0);
+        console.log(`[BIGTIFF] Pipeline complete for ${job.slideId.substring(0, 12)}: ${(genResult.size / 1024 / 1024).toFixed(1)} MB, gen=${(genResult.elapsed / 1000).toFixed(1)}s, upload=${((uploadResult.elapsed || 0) / 1000).toFixed(1)}s, total=${(totalElapsed / 1000).toFixed(1)}s`);
+      } catch (bigtiffErr) {
+        console.error(`[BIGTIFF] Failed for ${job.slideId.substring(0, 12)}: ${bigtiffErr.message}`);
+        await updateSlide(job.slideId, { tilegen_status: 'failed', status: 'ready' });
+        await updateJob(job.jobId, { status: 'failed', error: bigtiffErr.message });
+        // Clean up temp file on failure
+        await cleanupBigTIFF(job.slideId).catch(() => {});
+      }
     }
   } catch (err) {
     console.error(`Job failed: ${err.message}`);
@@ -562,11 +717,11 @@ async function processJob(job) {
 async function retryFailedTilegen() {
   try {
     const result = await getPool().query(
-      `SELECT id, raw_path, format, max_level FROM slides WHERE tilegen_status IN ('failed', 'queued', 'running')`
+      `SELECT id, raw_path, format, max_level, pipeline_mode FROM slides WHERE tilegen_status IN ('failed', 'queued', 'running')`
     );
     if (result.rows.length === 0) return;
 
-    console.log(`[RETRY] Found ${result.rows.length} slides with failed TILEGEN, re-queuing...`);
+    console.log(`[RETRY] Found ${result.rows.length} slides with incomplete processing, re-queuing...`);
 
     for (const slide of result.rows) {
       // Verify raw file still exists
@@ -577,29 +732,38 @@ async function retryFailedTilegen() {
         continue;
       }
 
-      const jobId = await createJob(slide.id, 'TILEGEN');
+      // Determine job type based on slide's pipeline_mode or current global mode
+      const slideMode = slide.pipeline_mode || PIPELINE_MODE;
+      const jobType = slideMode === 'bigtiff_iiif' ? 'BIGTIFF' : 'TILEGEN';
+
+      const jobId = await createJob(slide.id, jobType);
       if (jobId) {
         await updateSlide(slide.id, { tilegen_status: 'queued' });
         await enqueueJob({
           jobId,
           slideId: slide.id,
-          type: 'TILEGEN',
+          type: jobType,
           rawPath: slide.raw_path,
           format: slide.format,
           maxLevel: slide.max_level,
         });
-        console.log(`[RETRY] Re-queued TILEGEN for ${slide.id.substring(0, 12)}`);
+        console.log(`[RETRY] Re-queued ${jobType} for ${slide.id.substring(0, 12)}`);
       }
     }
   } catch (err) {
-    console.error(`[RETRY] Failed to retry TILEGEN jobs: ${err.message}`);
+    console.error(`[RETRY] Failed to retry jobs: ${err.message}`);
   }
 }
 
 async function worker() {
   console.log('SuperNavi Processor Worker starting...');
   console.log(`WSI formats (OpenSlide): ${WSI_FORMATS.join(', ')}`);
-  console.log(`Tile generation: full pyramid via vips dzsave (TILEGEN job)`);
+  console.log(`Pipeline mode: ${PIPELINE_MODE}`);
+  if (PIPELINE_MODE === 'bigtiff_iiif') {
+    console.log(`Post-P0: pyramidal BigTIFF → S3 multipart upload (BIGTIFF job)`);
+  } else {
+    console.log(`Post-P0: full pyramid via vips dzsave (TILEGEN job)`);
+  }
 
   // Wait for Redis
   let retries = 10;
