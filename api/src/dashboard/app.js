@@ -357,6 +357,9 @@
     time.textContent = relativeTime(slide.createdAt);
     right.appendChild(time);
 
+    // Action buttons row
+    const actions = el('div', { className: 'slide-actions' });
+
     // Re-process button: show for ready/failed WSI slides that have a raw file
     const isWSI = ['svs', 'tiff', 'ndpi', 'mrxs'].includes((slide.format || '').toLowerCase());
     const canReprocess = isWSI && slide.hasRawFile && ['ready', 'failed'].includes(slide.status);
@@ -367,9 +370,19 @@
         e.stopPropagation();
         reprocessSlide(slide.slideId, btn);
       });
-      right.appendChild(btn);
+      actions.appendChild(btn);
     }
 
+    // Delete button
+    const delBtn = el('button', { className: 'btn-delete' });
+    delBtn.textContent = 'Excluir';
+    delBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteSlide(slide.slideId, slide.originalFilename, card);
+    });
+    actions.appendChild(delBtn);
+
+    right.appendChild(actions);
     card.appendChild(right);
 
     return card;
@@ -427,6 +440,40 @@
         btn.textContent = 'Re-processar';
         btn.classList.remove('btn-reprocess-error');
       }, 3000);
+    }
+  }
+
+  async function deleteSlide(slideId, filename, card) {
+    const msg = `Excluir lâmina "${filename}"?\n\nIsso apaga banco, raw, derivados e agenda limpeza S3.`;
+    if (!confirm(msg)) return;
+
+    // Visual feedback
+    card.style.opacity = '0.5';
+    card.style.pointerEvents = 'none';
+
+    try {
+      const res = await fetch('/v1/slides/' + encodeURIComponent(slideId), {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        card.style.transition = 'opacity 0.3s ease, max-height 0.3s ease, margin 0.3s ease, padding 0.3s ease';
+        card.style.opacity = '0';
+        card.style.maxHeight = '0';
+        card.style.margin = '0';
+        card.style.padding = '0';
+        card.style.overflow = 'hidden';
+        setTimeout(() => card.remove(), 350);
+      } else {
+        card.style.opacity = '1';
+        card.style.pointerEvents = '';
+        alert(data.error || 'Erro ao excluir lâmina');
+      }
+    } catch (err) {
+      card.style.opacity = '1';
+      card.style.pointerEvents = '';
+      alert('Erro de rede ao excluir lâmina');
     }
   }
 

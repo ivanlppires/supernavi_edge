@@ -631,6 +631,31 @@ body::before {
   border-color: rgba(239, 68, 68, 0.3);
 }
 
+.slide-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.btn-delete {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  background: var(--red-bg);
+  color: var(--red);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-delete:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: var(--red);
+}
+
 
 /* ===== Activity Feed ===== */
 .activity-header {
