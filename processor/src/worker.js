@@ -695,6 +695,17 @@ async function processJob(job) {
         // Phase 6: Clean up temp BigTIFF file
         await cleanupBigTIFF(job.slideId);
 
+        // Phase 7: Clean up raw SVS file (BigTIFF is safely in S3)
+        if (uploadResult.status === 'READY' && job.rawPath) {
+          try {
+            await stat(job.rawPath);
+            await rm(job.rawPath);
+            console.log(`[BIGTIFF] Cleaned raw SVS: ${job.rawPath}`);
+          } catch {
+            // File doesn't exist or already removed — not an error
+          }
+        }
+
         const totalElapsed = genResult.elapsed + (uploadResult.elapsed || 0);
         console.log(`[BIGTIFF] Pipeline complete for ${job.slideId.substring(0, 12)}: ${(genResult.size / 1024 / 1024).toFixed(1)} MB, gen=${(genResult.elapsed / 1000).toFixed(1)}s, upload=${((uploadResult.elapsed || 0) / 1000).toFixed(1)}s, total=${(totalElapsed / 1000).toFixed(1)}s`);
       } catch (bigtiffErr) {
