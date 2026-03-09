@@ -8,7 +8,7 @@ import { processSVS_P0, processSVS_P1, generateFullTilePyramid, persistTilesBack
 import { publishRemotePreview, isPreviewEnabled, shutdown as shutdownPreview } from './preview/index.js';
 import { getConfig as getWasabiConfig, getSlidePrefix } from './preview/wasabiUploader.js';
 import { uploadSlideToCloud } from './cloud-uploader.js';
-import { generateBigTIFF, cleanupBigTIFF, checkDiskSpace } from './bigtiff-generator.js';
+import { generateBigTIFF, cleanupBigTIFF, checkDiskSpace, calculateParallelSlots } from './bigtiff-generator.js';
 import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 
@@ -27,6 +27,9 @@ let pool = null;
 // Track background persist promise so we can await it before the next TILEGEN.
 // This prevents tmpfs overflow: only 1 slide's tiles in hot at a time.
 let pendingPersist = null;
+
+// Track active BIGTIFF jobs for parallel processing
+const activeBigtiffJobs = new Set();
 
 // Formats that use the SVS/WSI pipeline
 const WSI_FORMATS = ['svs', 'tiff', 'ndpi', 'mrxs'];
@@ -781,6 +784,10 @@ async function worker() {
   // Retry any previously failed TILEGEN jobs
   await retryFailedTilegen();
 
+  // Log parallel capacity
+  const { slots: initialSlots, freeGB, cpuCores } = calculateParallelSlots();
+  console.log(`Parallel BigTIFF: ${initialSlots} slots (${freeGB.toFixed(1)} GB free, ${cpuCores} CPU cores)`);
+
   console.log('Worker ready, waiting for jobs...');
 
   const client = await getRedis();
@@ -790,8 +797,27 @@ async function worker() {
       // Blocking pop from queue (timeout 5s)
       const result = await client.brPop('jobs:pending', 5);
 
-      if (result) {
-        const job = JSON.parse(result.element);
+      if (!result) continue;
+
+      const job = JSON.parse(result.element);
+
+      // BIGTIFF jobs run in parallel (up to calculated slots)
+      if (job.type === 'BIGTIFF') {
+        const { slots } = calculateParallelSlots();
+
+        if (activeBigtiffJobs.size >= slots) {
+          // All slots full — wait for any one to finish before starting
+          console.log(`[BIGTIFF] ${activeBigtiffJobs.size}/${slots} slots busy, waiting...`);
+          await Promise.race([...activeBigtiffJobs]);
+        }
+
+        const jobPromise = processJob(job)
+          .finally(() => activeBigtiffJobs.delete(jobPromise));
+        activeBigtiffJobs.add(jobPromise);
+
+        console.log(`[BIGTIFF] ${activeBigtiffJobs.size}/${slots} slots active`);
+      } else {
+        // P0, P1, TILEGEN, CLEANUP — run sequentially
         await processJob(job);
       }
     } catch (err) {
@@ -804,6 +830,10 @@ async function worker() {
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('Shutting down worker...');
+  if (activeBigtiffJobs.size > 0) {
+    console.log(`Waiting for ${activeBigtiffJobs.size} active BigTIFF job(s) to finish...`);
+    await Promise.allSettled([...activeBigtiffJobs]);
+  }
   if (redis) await redis.quit();
   if (pool) await pool.end();
   await shutdownPreview();

@@ -9,6 +9,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { stat, mkdir, unlink, access } from 'fs/promises';
 import { join } from 'path';
+import os from 'os';
 
 const execAsync = promisify(exec);
 
@@ -77,6 +78,26 @@ export async function checkDiskSpace() {
   } catch {
     return Infinity; // If we can't check, assume enough space
   }
+}
+
+/**
+ * Calculate how many BigTIFF jobs can run in parallel based on available
+ * system resources (free RAM and CPU cores).
+ *
+ * Formula: min(floor(freeRAM / 3GB), floor(cpuCores / 4), 8)
+ *
+ * @returns {{ slots: number, freeGB: number, cpuCores: number }}
+ */
+export function calculateParallelSlots() {
+  const freeBytes = os.freemem();
+  const freeGB = freeBytes / (1024 ** 3);
+  const cpuCores = os.cpus().length;
+
+  const ramSlots = Math.floor(freeGB / 3);
+  const cpuSlots = Math.floor(cpuCores / 4);
+  const slots = Math.max(1, Math.min(ramSlots, cpuSlots, 8));
+
+  return { slots, freeGB, cpuCores };
 }
 
 /**
