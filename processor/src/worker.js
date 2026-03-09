@@ -202,6 +202,8 @@ async function processJob(job) {
       const result = await processP0(job);
 
       // Update slide with metadata
+      // For bigtiff_iiif pipeline, keep status as 'processing' until BIGTIFF completes
+      const needsPostP0 = isWSIFormat(format) && PIPELINE_MODE === 'bigtiff_iiif';
       const slideUpdate = {
         width: result.width,
         height: result.height,
@@ -209,7 +211,7 @@ async function processJob(job) {
         level_ready_max: result.levelReadyMax,
         thumb_path: result.thumbPath,
         manifest_path: result.manifestPath,
-        status: 'ready'
+        status: needsPostP0 ? 'processing' : 'ready'
       };
       // Add magnification metadata if available
       if (result.appMag !== undefined && result.appMag !== null) {
@@ -222,14 +224,16 @@ async function processJob(job) {
 
       await updateJob(job.jobId, { status: 'done' });
 
-      // Publish slide:ready event for SSE subscribers
-      await publishEvent('slide:ready', {
-        slideId: job.slideId,
-        width: result.width,
-        height: result.height,
-        maxLevel: result.maxLevel,
-        timestamp: Date.now()
-      });
+      // Publish slide:ready event for SSE subscribers (only if truly ready)
+      if (!needsPostP0) {
+        await publishEvent('slide:ready', {
+          slideId: job.slideId,
+          width: result.width,
+          height: result.height,
+          maxLevel: result.maxLevel,
+          timestamp: Date.now()
+        });
+      }
 
       // Enqueue P1 job for remaining levels (only for image formats)
       // WSI formats generate all levels at once with vips dzsave
