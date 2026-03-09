@@ -2,11 +2,12 @@ import { createReadStream, createWriteStream } from 'fs';
 import { access, readFile, readdir, mkdir, rm } from 'fs/promises';
 import { join, extname, basename } from 'path';
 import { pipeline } from 'stream/promises';
-import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide, updateSlideOcr } from '../db/slides.js';
+import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide, updateSlideOcr, createJob } from '../db/slides.js';
 import { generateTile, getPendingCount } from '../services/tilegen-svs.js';
 import { enqueueJob } from '../lib/queue.js';
 import { query } from '../db/index.js';
 import { ocrLabel, isOcrEnabled, parseOcrResponse } from '../lib/label-ocr.js';
+import { stat } from 'fs/promises';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
@@ -83,7 +84,10 @@ export default async function slidesRoutes(fastify) {
         ocrStatus: s.ocr_status || null,
         externalCaseBase: s.external_case_base || null,
         externalSlideLabel: s.external_slide_label || null,
-        hasLabel: !!s.dsmeta_path
+        hasLabel: !!s.dsmeta_path,
+        hasRawFile: !!s.raw_path,
+        pipelineMode: s.pipeline_mode || null,
+        tilegenStatus: s.tilegen_status || null
       }))
     };
   });
@@ -553,6 +557,76 @@ export default async function slidesRoutes(fastify) {
       caseBase: parsed.caseBase,
       slideLabel: parsed.slideLabel,
       newFilename,
+    };
+  });
+
+  // Re-process a slide (re-trigger BigTIFF generation + upload)
+  fastify.post('/slides/:slideId/reprocess', async (request, reply) => {
+    const { slideId } = request.params;
+    const slide = await getSlide(slideId);
+
+    if (!slide) {
+      reply.code(404);
+      return { error: 'Slide not found' };
+    }
+
+    // Check if raw file still exists
+    if (!slide.raw_path) {
+      reply.code(400);
+      return { error: 'No raw file path recorded for this slide' };
+    }
+
+    try {
+      await stat(slide.raw_path);
+    } catch {
+      reply.code(400);
+      return { error: 'Raw file no longer exists on disk', rawPath: slide.raw_path };
+    }
+
+    // Don't re-process if already running
+    const activeJob = await query(
+      `SELECT id FROM jobs WHERE slide_id = $1 AND type IN ('BIGTIFF', 'TILEGEN') AND status IN ('queued', 'running') LIMIT 1`,
+      [slideId]
+    );
+    if (activeJob.rows.length > 0) {
+      reply.code(409);
+      return { error: 'A processing job is already active for this slide' };
+    }
+
+    // Determine pipeline mode
+    const pipelineMode = slide.pipeline_mode || process.env.EDGE_PIPELINE_MODE || 'legacy_dzi';
+    const jobType = pipelineMode === 'bigtiff_iiif' ? 'BIGTIFF' : 'TILEGEN';
+
+    // Reset slide status
+    await query(
+      `UPDATE slides SET status = 'processing', tilegen_status = 'queued', pipeline_mode = $1 WHERE id = $2`,
+      [pipelineMode, slideId]
+    );
+
+    // Create and enqueue the job
+    const job = await createJob({ slideId, type: jobType });
+    if (!job) {
+      reply.code(500);
+      return { error: 'Failed to create processing job' };
+    }
+
+    await enqueueJob({
+      jobId: job.id,
+      slideId,
+      type: jobType,
+      rawPath: slide.raw_path,
+      format: slide.format,
+      maxLevel: slide.max_level,
+    });
+
+    console.log(`[REPROCESS] Queued ${jobType} for ${slideId.substring(0, 12)} (${slide.original_filename})`);
+
+    return {
+      success: true,
+      slideId,
+      jobType,
+      pipelineMode,
+      message: `Re-processing queued (${jobType})`,
     };
   });
 

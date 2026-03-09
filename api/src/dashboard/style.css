@@ -596,6 +596,41 @@ body::before {
   font-family: var(--font-mono);
 }
 
+.btn-reprocess {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: var(--blue-bg);
+  color: var(--blue);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-reprocess:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: var(--blue);
+}
+
+.btn-reprocess:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-reprocess-sent {
+  background: var(--green-bg);
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.btn-reprocess-error {
+  background: var(--red-bg);
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
 
 /* ===== Activity Feed ===== */
 .activity-header {

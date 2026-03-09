@@ -346,7 +346,7 @@
 
     card.appendChild(info);
 
-    // Right section: status + time
+    // Right section: status + time + reprocess button
     const right = el('div', { className: 'slide-right' });
 
     const statusBadge = el('span', { className: 'badge badge-' + (slide.status || 'queued') });
@@ -356,6 +356,19 @@
     const time = el('span', { className: 'slide-time' });
     time.textContent = relativeTime(slide.createdAt);
     right.appendChild(time);
+
+    // Re-process button: show for ready/failed WSI slides that have a raw file
+    const isWSI = ['svs', 'tiff', 'ndpi', 'mrxs'].includes((slide.format || '').toLowerCase());
+    const canReprocess = isWSI && slide.hasRawFile && ['ready', 'failed'].includes(slide.status);
+    if (canReprocess) {
+      const btn = el('button', { className: 'btn-reprocess' });
+      btn.textContent = 'Re-processar';
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        reprocessSlide(slide.slideId, btn);
+      });
+      right.appendChild(btn);
+    }
 
     card.appendChild(right);
 
@@ -370,6 +383,51 @@
       failed: 'Erro'
     };
     return labels[status] || status || '--';
+  }
+
+  async function reprocessSlide(slideId, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Enviando...';
+
+    try {
+      const res = await fetch('/v1/slides/' + encodeURIComponent(slideId) + '/reprocess', {
+        method: 'POST',
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        btn.textContent = 'Na fila';
+        btn.classList.add('btn-reprocess-sent');
+        // Update the card status visually
+        const card = btn.closest('.slide-card');
+        if (card) {
+          card.setAttribute('data-status', 'processing');
+          const badge = card.querySelector('.badge-ready, .badge-failed');
+          if (badge) {
+            badge.className = 'badge badge-processing';
+            badge.textContent = 'Processando';
+          }
+        }
+        // Refresh slides list after a short delay
+        setTimeout(fetchSlides, 2000);
+      } else {
+        btn.textContent = data.error || 'Erro';
+        btn.classList.add('btn-reprocess-error');
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = 'Re-processar';
+          btn.classList.remove('btn-reprocess-error');
+        }, 3000);
+      }
+    } catch (err) {
+      btn.textContent = 'Erro de rede';
+      btn.classList.add('btn-reprocess-error');
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = 'Re-processar';
+        btn.classList.remove('btn-reprocess-error');
+      }, 3000);
+    }
   }
 
   function initSlideFilters() {
