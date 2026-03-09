@@ -36,10 +36,20 @@ export async function generateBigTIFF(slideId, rawPath) {
 
   console.log(`[BIGTIFF] Generating pyramidal BigTIFF for ${slideId.substring(0, 12)}`);
   console.log(`[BIGTIFF] Input: ${rawPath}`);
-  console.log(`[BIGTIFF] Settings: tile=${TILE_SIZE}x${TILE_SIZE}, Q=${JPEG_QUALITY}, bigtiff=true`);
+  console.log(`[BIGTIFF] Settings: tile=${TILE_SIZE}x${TILE_SIZE}, Q=${JPEG_QUALITY}, bigtiff=true, subifd=true`);
 
-  const cmd = [
-    `vips tiffsave "${rawPath}" "${outputPath}"`,
+  // Detect which loader vips will use for this file
+  try {
+    const { stdout } = await execAsync(`vipsheader -f vips-loader "${rawPath}"`);
+    console.log(`[BIGTIFF] Vips loader: ${stdout.trim()}`);
+  } catch {
+    console.log(`[BIGTIFF] Could not detect vips loader`);
+  }
+
+  // Build tiffsave flags:
+  // --subifd: stores pyramid levels as SubIFDs (standard for whole-slide images,
+  //           better compatibility with IIIF servers like Cantaloupe)
+  const tiffsaveFlags = [
     '--compression jpeg',
     `--Q ${JPEG_QUALITY}`,
     '--tile',
@@ -47,13 +57,35 @@ export async function generateBigTIFF(slideId, rawPath) {
     `--tile-height ${TILE_SIZE}`,
     '--pyramid',
     '--bigtiff',
+    '--subifd',
   ].join(' ');
 
-  await execAsync(cmd, {
-    timeout: BIGTIFF_TIMEOUT_MS,
-    maxBuffer: 10 * 1024 * 1024,
-    env: { ...process.env },
-  });
+  // Force OpenSlide loader by passing level=0 (an openslide-specific option).
+  // This prevents vips from falling back to tiffload, which can misread
+  // multi-IFD SVS files and produce blurry regions in the output.
+  const openslideCmd = `vips tiffsave "${rawPath}[level=0]" "${outputPath}" ${tiffsaveFlags}`;
+
+  try {
+    await execAsync(openslideCmd, {
+      timeout: BIGTIFF_TIMEOUT_MS,
+      maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env },
+    });
+    console.log(`[BIGTIFF] Conversion complete (OpenSlide loader, level=0)`);
+  } catch (err) {
+    // If openslide fails (e.g., non-SVS TIFF), fall back to auto-detect
+    console.warn(`[BIGTIFF] OpenSlide load failed: ${err.message}`);
+    console.log(`[BIGTIFF] Falling back to auto-detect loader...`);
+    await unlink(outputPath).catch(() => {});
+
+    const fallbackCmd = `vips tiffsave "${rawPath}" "${outputPath}" ${tiffsaveFlags}`;
+    await execAsync(fallbackCmd, {
+      timeout: BIGTIFF_TIMEOUT_MS,
+      maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env },
+    });
+    console.log(`[BIGTIFF] Conversion complete (auto-detect loader)`);
+  }
 
   const stats = await stat(outputPath);
   const elapsed = Date.now() - startTime;
