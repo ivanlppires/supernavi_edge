@@ -6,7 +6,7 @@ import { randomUUID } from 'crypto';
 import { pipeline } from 'stream/promises';
 import { hashFile } from '../lib/hash.js';
 import { enqueueJob } from '../lib/queue.js';
-import { createSlide, createJob, updateSlide, findSlideByFilename } from '../db/slides.js';
+import { createSlide, createJob, updateSlide } from '../db/slides.js';
 import { eventBus } from './events.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { loadConfig, getConfig } from '../lib/edge-config.js';
@@ -226,6 +226,26 @@ async function processFile(filePath) {
 
 async function scanExisting(ingestDir) {
   try {
+    const config = getConfig();
+    const RAW_DIR = process.env.RAW_DIR || config.rawDirContainer || '/data/raw';
+
+    // Build set of original filenames already in /data/raw
+    // Raw files are named: {slideId}_{originalFilename}
+    let knownFiles = new Set();
+    try {
+      const rawFiles = await readdir(RAW_DIR);
+      for (const rf of rawFiles) {
+        // Extract original filename after the first underscore past the 64-char hash
+        const underscoreIdx = rf.indexOf('_', 60);
+        if (underscoreIdx > 0) {
+          const origName = rf.substring(underscoreIdx + 1);
+          knownFiles.add(origName);
+        }
+      }
+    } catch {
+      // RAW_DIR not readable — skip optimization, hash everything
+    }
+
     const files = await readdir(ingestDir);
     let skipped = 0;
     let processed = 0;
@@ -234,15 +254,10 @@ async function scanExisting(ingestDir) {
       const ext = extname(file).toLowerCase();
       if (!SUPPORTED_EXTENSIONS.includes(ext)) continue;
 
-      // Fast path: check DB by filename before expensive SHA256 hash
-      try {
-        const existing = await findSlideByFilename(file);
-        if (existing && existing.status !== 'queued') {
-          skipped++;
-          continue;
-        }
-      } catch {
-        // DB not ready or query failed — fall through to full processing
+      // Fast path: skip if already processed (exists in /data/raw)
+      if (knownFiles.has(file)) {
+        skipped++;
+        continue;
       }
 
       const filePath = join(ingestDir, file);
@@ -250,9 +265,7 @@ async function scanExisting(ingestDir) {
       processed++;
     }
 
-    if (skipped > 0) {
-      console.log(`[ingest] Scan complete: ${skipped} already processed, ${processed} new`);
-    }
+    console.log(`[ingest] Scan complete: ${skipped} already processed, ${processed} new`);
   } catch (err) {
     console.error('Error scanning inbox:', err.message);
   }
