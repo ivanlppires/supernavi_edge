@@ -47,8 +47,9 @@ export async function generateBigTIFF(slideId, rawPath) {
   }
 
   // Build tiffsave flags:
-  // --subifd: stores pyramid levels as SubIFDs (standard for whole-slide images,
-  //           better compatibility with IIIF servers like Cantaloupe)
+  // NOTE: Do NOT use --subifd — Cantaloupe 6's imageio-ext library does not
+  // support TIFF IFD8 pointer types (tag type 18), causing ArrayIndexOutOfBoundsException.
+  // Standard multi-IFD pyramid (without SubIFD) is universally compatible.
   const tiffsaveFlags = [
     '--compression jpeg',
     `--Q ${JPEG_QUALITY}`,
@@ -57,7 +58,6 @@ export async function generateBigTIFF(slideId, rawPath) {
     `--tile-height ${TILE_SIZE}`,
     '--pyramid',
     '--bigtiff',
-    '--subifd',
   ].join(' ');
 
   // Force OpenSlide loader by passing level=0 (an openslide-specific option).
