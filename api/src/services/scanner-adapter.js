@@ -19,7 +19,7 @@ import { join, extname } from 'path';
 import { constants } from 'fs';
 import { hashFile } from '../lib/hash.js';
 import { parseDsmeta, parseMoticPath } from '../lib/dsmeta-parser.js';
-import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides } from '../db/slides.js';
+import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides, deduplicateSlideLabel } from '../db/slides.js';
 import { query } from '../db/index.js';
 import { ocrLabel, isOcrEnabled } from '../lib/label-ocr.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
@@ -104,14 +104,15 @@ async function processNewFile(filePath) {
       const ocrResult = await ocrLabel(dsmetaDir);
 
       if (ocrResult) {
-        const newFilename = ocrResult.fullName + '.' + format;
+        const dedupName = await deduplicateSlideLabel(ocrResult.fullName, slideId);
+        const newFilename = dedupName + '.' + format;
         console.log(`[Scanner] OCR: ${filename} -> ${newFilename}`);
         effectiveFilename = newFilename;
         ocrStatus = 'done';
         externalFields = {
           externalCaseId: `pathoweb:${ocrResult.caseBase}`,
           externalCaseBase: ocrResult.caseBase,
-          externalSlideLabel: ocrResult.fullName,
+          externalSlideLabel: dedupName,
         };
       } else {
         console.log(`[Scanner] OCR: could not read label for ${filename}, processing with original name`);
@@ -229,7 +230,8 @@ async function retryPendingOcr() {
       }
 
       const format = slide.format || 'svs';
-      const newFilename = ocrResult.fullName + '.' + format;
+      const dedupName = await deduplicateSlideLabel(ocrResult.fullName, slide.id);
+      const newFilename = dedupName + '.' + format;
 
       console.log(`[Scanner] OCR retry success: ${slide.original_filename} -> ${newFilename}`);
 
@@ -238,7 +240,7 @@ async function retryPendingOcr() {
         originalFilename: newFilename,
         externalCaseId: `pathoweb:${ocrResult.caseBase}`,
         externalCaseBase: ocrResult.caseBase,
-        externalSlideLabel: ocrResult.fullName,
+        externalSlideLabel: dedupName,
         ocrStatus: 'done',
       });
 

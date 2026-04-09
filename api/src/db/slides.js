@@ -148,6 +148,42 @@ export async function deleteSlide(id) {
 }
 
 /**
+ * Deduplicate a slide label by appending B, C, D... if another slide
+ * already has the same external_slide_label.
+ *
+ * @param {string} fullName - The OCR-parsed full name (e.g., "AP26000388A1")
+ * @param {string} slideId  - Current slide ID (excluded from duplicate check)
+ * @returns {Promise<string>} - Deduplicated fullName (e.g., "AP26000388A1B" if dup)
+ */
+export async function deduplicateSlideLabel(fullName, slideId) {
+  const existing = await query(
+    'SELECT id FROM slides WHERE external_slide_label = $1 AND id != $2 LIMIT 1',
+    [fullName, slideId]
+  );
+
+  if (existing.rows.length === 0) return fullName;
+
+  // Append B, C, D... until unique
+  const suffixes = 'BCDEFGHIJKLMNOPQRSTUVWXYZ';
+  for (const ch of suffixes) {
+    const candidate = fullName + ch;
+    const dup = await query(
+      'SELECT id FROM slides WHERE external_slide_label = $1 AND id != $2 LIMIT 1',
+      [candidate, slideId]
+    );
+    if (dup.rows.length === 0) {
+      console.log(`[Dedup] "${fullName}" already exists, using "${candidate}"`);
+      return candidate;
+    }
+  }
+
+  // Extremely unlikely: 25+ duplicates — use timestamp suffix
+  const ts = Date.now().toString(36);
+  console.log(`[Dedup] "${fullName}" exhausted letter suffixes, using timestamp: "${fullName}_${ts}"`);
+  return `${fullName}_${ts}`;
+}
+
+/**
  * List slides with pending OCR status for retry.
  */
 export async function listPendingOcrSlides() {

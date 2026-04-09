@@ -2,7 +2,7 @@ import { createReadStream, createWriteStream } from 'fs';
 import { access, readFile, readdir, mkdir, rm } from 'fs/promises';
 import { join, extname, basename } from 'path';
 import { pipeline } from 'stream/promises';
-import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide, updateSlideOcr, createJob } from '../db/slides.js';
+import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide, updateSlideOcr, createJob, deduplicateSlideLabel } from '../db/slides.js';
 import { generateTile, getPendingCount } from '../services/tilegen-svs.js';
 import { enqueueJob } from '../lib/queue.js';
 import { query } from '../db/index.js';
@@ -448,14 +448,15 @@ export default async function slidesRoutes(fastify) {
     }
 
     const format = slide.format || 'svs';
-    const newFilename = ocrResult.fullName + '.' + format;
+    const dedupName = await deduplicateSlideLabel(ocrResult.fullName, slideId);
+    const newFilename = dedupName + '.' + format;
 
     // Update slide DB
     await updateSlideOcr(slideId, {
       originalFilename: newFilename,
       externalCaseId: `pathoweb:${ocrResult.caseBase}`,
       externalCaseBase: ocrResult.caseBase,
-      externalSlideLabel: ocrResult.fullName,
+      externalSlideLabel: dedupName,
       ocrStatus: 'done',
     });
 
@@ -486,7 +487,7 @@ export default async function slidesRoutes(fastify) {
     return {
       success: true,
       ocrStatus: 'done',
-      fullName: ocrResult.fullName,
+      fullName: dedupName,
       caseBase: ocrResult.caseBase,
       slideLabel: ocrResult.slideLabel,
       newFilename,
@@ -516,13 +517,14 @@ export default async function slidesRoutes(fastify) {
     }
 
     const format = slide.format || 'svs';
-    const newFilename = parsed.fullName + '.' + format;
+    const dedupName = await deduplicateSlideLabel(parsed.fullName, slideId);
+    const newFilename = dedupName + '.' + format;
 
     await updateSlideOcr(slideId, {
       originalFilename: newFilename,
       externalCaseId: `pathoweb:${parsed.caseBase}`,
       externalCaseBase: parsed.caseBase,
-      externalSlideLabel: parsed.fullName,
+      externalSlideLabel: dedupName,
       ocrStatus: 'done',
     });
 
@@ -553,7 +555,7 @@ export default async function slidesRoutes(fastify) {
     return {
       success: true,
       ocrStatus: 'done',
-      fullName: parsed.fullName,
+      fullName: dedupName,
       caseBase: parsed.caseBase,
       slideLabel: parsed.slideLabel,
       newFilename,
