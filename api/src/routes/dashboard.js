@@ -21,8 +21,21 @@ export default async function dashboardRoutes(fastify) {
         COUNT(*) FILTER (WHERE status = 'ready') AS ready,
         COUNT(*) FILTER (WHERE status = 'processing') AS processing,
         COUNT(*) FILTER (WHERE status = 'queued') AS queued,
-        COUNT(*) FILTER (WHERE status = 'failed') AS failed
+        COUNT(*) FILTER (WHERE status = 'failed') AS failed,
+        COUNT(*) FILTER (WHERE
+          status = 'failed'
+          OR latest_error IS NOT NULL
+          OR cloud_upload_status = 'failed'
+          OR tilegen_status = 'failed'
+        ) AS with_problems
       FROM slides
+    `);
+
+    const stuckSync = await query(`
+      SELECT COUNT(*) AS count
+        FROM outbox_events
+       WHERE synced_at IS NULL
+         AND created_at < NOW() - INTERVAL '5 minutes'
     `);
 
     const jobCounts = await query(`
@@ -63,12 +76,16 @@ export default async function dashboardRoutes(fastify) {
         ready: Number(counts.ready) || 0,
         processing: Number(counts.processing) || 0,
         queued: Number(counts.queued) || 0,
-        failed: Number(counts.failed) || 0
+        failed: Number(counts.failed) || 0,
+        withProblems: Number(counts.with_problems) || 0,
       },
       jobs: {
         pending: Number(jobs.queued) || 0,
         running: Number(jobs.running) || 0,
         active: activeJobs.rows
+      },
+      sync: {
+        stuckCount: Number(stuckSync.rows[0]?.count) || 0,
       }
     };
   });

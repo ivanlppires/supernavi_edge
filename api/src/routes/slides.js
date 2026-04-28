@@ -87,7 +87,11 @@ export default async function slidesRoutes(fastify) {
         hasLabel: !!s.dsmeta_path,
         hasRawFile: !!s.raw_path,
         pipelineMode: s.pipeline_mode || null,
-        tilegenStatus: s.tilegen_status || null
+        tilegenStatus: s.tilegen_status || null,
+        cloudUploadStatus: s.cloud_upload_status || null,
+        latestError: s.latest_error || null,
+        latestErrorStage: s.latest_error_stage || null,
+        latestErrorAt: s.latest_error_at || null,
       }))
     };
   });

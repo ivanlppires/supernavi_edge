@@ -28,6 +28,9 @@
   <nav class="tab-bar" id="tabBar">
     <button class="tab-btn active" data-tab="status">Status</button>
     <button class="tab-btn" data-tab="slides">L&acirc;minas</button>
+    <button class="tab-btn" data-tab="failures">
+      Falhas <span class="tab-badge" id="failuresBadge" style="display:none">0</span>
+    </button>
     <button class="tab-btn" data-tab="activity">Atividade</button>
     <button class="tab-btn" data-tab="settings">Configura&ccedil;&otilde;es</button>
   </nav>
@@ -193,6 +196,45 @@
         </div>
       </div>
     </section>
+
+    <!-- Tab: Failures -->
+    <section class="tab-panel" id="panel-failures">
+      <div class="failures-header">
+        <h2 class="failures-title">L&acirc;minas com Problema</h2>
+        <span class="failures-subtitle" id="failuresSubtitle">--</span>
+        <button class="btn-clear" id="refreshFailures" style="margin-left:auto">Atualizar</button>
+      </div>
+      <div class="failures-list" id="failuresList">
+        <div class="empty-state" id="failuresEmpty">
+          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+            <polyline points="22 4 12 14.01 9 11.01"/>
+          </svg>
+          <p>Nenhuma l&acirc;mina com problema</p>
+        </div>
+      </div>
+
+      <div class="failures-section" id="stuckSyncSection" style="display:none">
+        <h3 class="failures-section-title">Eventos travados na sincroniza&ccedil;&atilde;o</h3>
+        <div class="failures-list" id="stuckSyncList"></div>
+      </div>
+    </section>
+
+    <!-- Pipeline Timeline Modal -->
+    <div class="pipeline-modal-overlay" id="pipelineModal">
+      <div class="pipeline-modal">
+        <div class="pipeline-modal-header">
+          <div>
+            <h2 class="pipeline-modal-title" id="pipelineModalTitle">Timeline da L&acirc;mina</h2>
+            <div class="pipeline-modal-subtitle" id="pipelineModalSubtitle">--</div>
+          </div>
+          <button class="ocr-modal-close" id="pipelineModalClose" aria-label="Fechar">&times;</button>
+        </div>
+        <div class="pipeline-modal-body" id="pipelineModalBody">
+          <div class="pipeline-loading">Carregando...</div>
+        </div>
+      </div>
+    </div>
 
     <!-- Tab 3: Activity -->
     <section class="tab-panel" id="panel-activity">

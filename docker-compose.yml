@@ -71,6 +71,7 @@ services:
       dockerfile: Dockerfile
     container_name: supernavi-processor
     restart: unless-stopped
+    stop_grace_period: 15s
     environment:
       REDIS_URL: redis://redis:6379
       DATABASE_URL: postgres://supernavi:supernavi@db:5432/supernavi

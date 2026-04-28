@@ -7,6 +7,7 @@
 
 import pg from 'pg';
 import { config, log } from './config.js';
+import { pipelineLog, recordSyncFailure } from './pipeline-log.js';
 
 const { Pool } = pg;
 
@@ -123,16 +124,63 @@ async function processSyncResponse(response, sentEvents) {
   if (accepted.length > 0) {
     await markEventsSynced(accepted);
     log.info('Events synced successfully', { count: accepted.length });
+    // Log per-slide success for observability
+    const acceptedSlideEvents = sentEvents.filter(
+      e => accepted.includes(e.event_id) && (e.entity_type === 'slide' || e.entity_type === 'preview')
+    );
+    for (const ev of acceptedSlideEvents) {
+      const slideId = ev.entity_type === 'slide' ? ev.entity_id : (ev.entity_id || '').replace(/^preview:/, '');
+      if (slideId) {
+        await pipelineLog(getPool(), slideId, 'sync', 'info',
+          `Synced to cloud: ${ev.entity_type}/${ev.op}`,
+          { eventId: ev.event_id });
+      }
+    }
   }
+
+  // Index sent events by event_id for quick lookup
+  const sentMap = new Map(sentEvents.map(e => [e.event_id, e]));
 
   // Handle rejected events
   for (const rejection of rejected) {
-    const { eventId, reason } = rejection;
+    const { eventId, reason, status } = rejection;
+    const sentEvent = sentMap.get(eventId);
 
     // Check if it's a permanent error (invalid schema, etc.)
     const isPermanent = reason?.includes('invalid') ||
                         reason?.includes('schema') ||
                         reason?.includes('duplicate');
+
+    // Persist failure record (always — temporary or permanent — so the dashboard
+    // can show what's stuck and why).
+    if (sentEvent) {
+      await recordSyncFailure(
+        getPool(),
+        eventId,
+        sentEvent.entity_type,
+        sentEvent.entity_id,
+        reason,
+        status || null,
+        isPermanent
+      );
+
+      // Log to slide_pipeline_events if this is a slide/preview event
+      if (sentEvent.entity_type === 'slide' || sentEvent.entity_type === 'preview') {
+        const slideId = sentEvent.entity_type === 'slide'
+          ? sentEvent.entity_id
+          : (sentEvent.entity_id || '').replace(/^preview:/, '');
+        if (slideId) {
+          await pipelineLog(
+            getPool(),
+            slideId,
+            'sync',
+            isPermanent ? 'error' : 'warn',
+            `Cloud rejected ${sentEvent.entity_type}/${sentEvent.op}: ${reason}`,
+            { eventId, isPermanent, httpStatus: status || null }
+          );
+        }
+      }
+    }
 
     if (isPermanent) {
       // Mark as synced to prevent retry
@@ -211,6 +259,25 @@ async function syncCycle() {
       consecutiveFailures,
       nextRetryMs: backoff
     });
+
+    // Log batch-level failure to pipeline_events for each slide-related event in the batch
+    try {
+      const events = await fetchPendingEvents(config.syncBatchSize);
+      for (const ev of events) {
+        if (ev.entity_type === 'slide' || ev.entity_type === 'preview') {
+          const slideId = ev.entity_type === 'slide'
+            ? ev.entity_id
+            : (ev.entity_id || '').replace(/^preview:/, '');
+          if (slideId) {
+            await pipelineLog(getPool(), slideId, 'sync', 'warn',
+              `Sync transport error: ${err.message}`,
+              { consecutiveFailures, nextRetryMs: backoff });
+          }
+        }
+      }
+    } catch {
+      // Don't compound errors
+    }
 
     // Check if we've exceeded max retries
     if (consecutiveFailures >= config.syncMaxRetry) {

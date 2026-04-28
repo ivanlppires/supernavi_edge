@@ -45,6 +45,7 @@
       // Lazy-load data for the activated tab
       if (tabId === 'slides') fetchSlides();
       if (tabId === 'settings') loadSettings();
+      if (tabId === 'failures') fetchFailures();
     });
   }
 
@@ -191,6 +192,20 @@
       setText('#diskProcessing', 'Processando: ' + data.slides.processing);
       setText('#diskQueued', 'Na fila: ' + data.slides.queued);
       setText('#diskFailed', 'Com erro: ' + data.slides.failed);
+    }
+
+    // Failures tab badge
+    const totalProblems = (data.slides && data.slides.withProblems) || 0;
+    const stuckSync = (data.sync && data.sync.stuckCount) || 0;
+    const totalIssues = totalProblems + stuckSync;
+    const badge = $('#failuresBadge');
+    if (badge) {
+      if (totalIssues > 0) {
+        badge.textContent = String(totalIssues);
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
     }
   }
 
@@ -356,6 +371,24 @@
     const time = el('span', { className: 'slide-time' });
     time.textContent = relativeTime(slide.createdAt);
     right.appendChild(time);
+
+    // Problem indicator (alert icon) — visible when slide has any pipeline issue
+    const hasProblem =
+      slide.status === 'failed' ||
+      slide.latestError ||
+      slide.cloudUploadStatus === 'failed' ||
+      slide.tilegenStatus === 'failed';
+    if (hasProblem) {
+      const alertBtn = el('button', { className: 'slide-alert-btn' });
+      alertBtn.title = slide.latestError || 'Lâmina com problema — clique para ver detalhes';
+      alertBtn.setAttribute('aria-label', 'Ver detalhes do erro');
+      alertBtn.textContent = 'Ver erro';
+      alertBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openPipelineModal(slide.slideId, slide.originalFilename);
+      });
+      right.appendChild(alertBtn);
+    }
 
     // Action buttons row
     const actions = el('div', { className: 'slide-actions' });
@@ -918,6 +951,12 @@
         return 'Preview publicado na nuvem';
       case 'preview:failed':
         return 'Falha ao publicar preview: ' + (data && data.error || 'erro');
+      case 'slide:failed':
+        return 'Falha no processamento (' + (data && data.stage || '?') + '): ' + (data && data.error || 'erro');
+      case 'pipeline:error':
+        return 'Erro em ' + (data && data.stage || '?') + ': ' + (data && data.message || '');
+      case 'ingest:failed':
+        return 'Falha na ingest\u00e3o: ' + (data && data.filename || '') + ' \u2014 ' + (data && data.error || '');
       case 'connected':
         return 'Conex\u00e3o SSE estabelecida';
       default:
@@ -931,6 +970,7 @@
     if (eventType.startsWith('tile:')) return 'tile';
     if (eventType === 'preview:published') return 'ready';
     if (eventType === 'preview:failed') return 'error';
+    if (eventType === 'slide:failed' || eventType === 'pipeline:error' || eventType === 'ingest:failed') return 'error';
     if (eventType === 'connected') return 'connection';
     return 'default';
   }
@@ -1268,6 +1308,30 @@
       addActivityEvent('preview:failed', data);
     });
 
+    // Named event: slide:failed (emitted when TILEGEN/BIGTIFF/job-level fails)
+    eventSource.addEventListener('slide:failed', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('slide:failed', data);
+      refreshAfterSlideEvent();
+      // Refresh failures tab if active
+      const failPanel = $('#panel-failures');
+      if (failPanel && failPanel.classList.contains('active')) fetchFailures();
+    });
+
+    // Named event: pipeline:error (any stage error logged via pipelineLog)
+    eventSource.addEventListener('pipeline:error', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('pipeline:error', data);
+      const failPanel = $('#panel-failures');
+      if (failPanel && failPanel.classList.contains('active')) fetchFailures();
+    });
+
+    // Named event: ingest:failed (file copy/hash error before slide row exists)
+    eventSource.addEventListener('ingest:failed', (e) => {
+      const data = safeParseJSON(e.data);
+      addActivityEvent('ingest:failed', data);
+    });
+
     // Generic message event (for any unnamed events)
     eventSource.addEventListener('message', (e) => {
       const data = safeParseJSON(e.data);
@@ -1305,6 +1369,353 @@
   }
 
   // =====================
+  //  Tab: Failures
+  // =====================
+  function stageLabel(stage) {
+    const labels = {
+      ingest: 'Ingestão',
+      p0: 'P0 (thumbnail)',
+      p1: 'P1 (níveis extras)',
+      tilegen: 'Geração de tiles',
+      bigtiff: 'BigTIFF',
+      cloud_upload: 'Upload para nuvem',
+      outbox: 'Outbox',
+      sync: 'Sincronização',
+      preview: 'Preview',
+      cleanup: 'Limpeza',
+      unknown: 'Desconhecido'
+    };
+    return labels[stage] || stage;
+  }
+
+  function severityClass(sev) {
+    if (sev === 'critical') return 'sev-critical';
+    if (sev === 'warning') return 'sev-warning';
+    return 'sev-info';
+  }
+
+  function actionLabel(action) {
+    const labels = {
+      reprocess: 'Re-processar',
+      redigitalize: 'Redigitalizar',
+      check_disk: 'Verificar disco',
+      check_credentials: 'Verificar credenciais',
+      check_cloud: 'Verificar nuvem',
+      wait_retry: 'Aguardar retry',
+      check_logs: 'Verificar logs',
+      manual: 'Manual'
+    };
+    return labels[action] || action;
+  }
+
+  async function fetchFailures() {
+    try {
+      const res = await fetch('/v1/dashboard/failures');
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      renderFailures(data);
+    } catch (err) {
+      console.error('Failures fetch error:', err);
+    }
+  }
+
+  function renderFailures(data) {
+    const list = $('#failuresList');
+    const empty = $('#failuresEmpty');
+    const subtitle = $('#failuresSubtitle');
+    const stuckSection = $('#stuckSyncSection');
+    const stuckList = $('#stuckSyncList');
+
+    // Clear existing failure cards (keep empty state)
+    list.querySelectorAll('.failure-card').forEach(c => c.remove());
+
+    const failures = data.failures || [];
+    setText(subtitle, failures.length === 0
+      ? 'Tudo em ordem'
+      : (failures.length + (failures.length === 1 ? ' lâmina afetada' : ' lâminas afetadas')));
+
+    if (failures.length === 0) {
+      if (empty) empty.style.display = '';
+    } else {
+      if (empty) empty.style.display = 'none';
+      for (const f of failures) {
+        list.appendChild(buildFailureCard(f));
+      }
+    }
+
+    // Stuck sync events
+    const stuck = data.stuckSync || [];
+    if (stuckList) clearChildren(stuckList);
+    if (stuck.length > 0) {
+      stuckSection.style.display = '';
+      for (const s of stuck) {
+        stuckList.appendChild(buildStuckSyncCard(s));
+      }
+    } else {
+      stuckSection.style.display = 'none';
+    }
+  }
+
+  function buildFailureCard(failure) {
+    const card = el('div', { className: 'failure-card ' + severityClass(failure.advice?.severity) });
+
+    const header = el('div', { className: 'failure-card-header' });
+    const filename = el('div', { className: 'failure-filename' });
+    filename.textContent = failure.originalFilename || failure.slideId.substring(0, 12);
+    header.appendChild(filename);
+
+    const stageBadge = el('span', { className: 'failure-stage-badge' });
+    stageBadge.textContent = stageLabel(failure.stage);
+    header.appendChild(stageBadge);
+
+    const time = el('span', { className: 'failure-time' });
+    time.textContent = relativeTime(failure.errorAt);
+    header.appendChild(time);
+
+    card.appendChild(header);
+
+    const reason = el('div', { className: 'failure-reason' });
+    reason.textContent = failure.advice?.reason || failure.message || 'Erro desconhecido';
+    card.appendChild(reason);
+
+    if (failure.advice?.suggestion) {
+      const suggestion = el('div', { className: 'failure-suggestion' });
+      const label = el('span', { className: 'failure-suggestion-label' });
+      label.textContent = 'Sugestão: ';
+      suggestion.appendChild(label);
+      suggestion.appendChild(document.createTextNode(failure.advice.suggestion));
+      card.appendChild(suggestion);
+    }
+
+    const errMsg = el('div', { className: 'failure-error-msg' });
+    errMsg.textContent = failure.message || '--';
+    card.appendChild(errMsg);
+
+    // Actions
+    const actions = el('div', { className: 'failure-actions' });
+    const detailsBtn = el('button', { className: 'btn-failure-details' });
+    detailsBtn.textContent = 'Ver timeline';
+    detailsBtn.addEventListener('click', () => {
+      openPipelineModal(failure.slideId, failure.originalFilename);
+    });
+    actions.appendChild(detailsBtn);
+
+    const advAction = failure.advice?.action;
+    if (advAction === 'reprocess') {
+      const rpBtn = el('button', { className: 'btn-failure-action' });
+      rpBtn.textContent = 'Re-processar';
+      rpBtn.addEventListener('click', () => reprocessSlide(failure.slideId, rpBtn));
+      actions.appendChild(rpBtn);
+    } else if (advAction) {
+      const tag = el('span', { className: 'failure-action-tag' });
+      tag.textContent = actionLabel(advAction);
+      actions.appendChild(tag);
+    }
+
+    card.appendChild(actions);
+    return card;
+  }
+
+  function buildStuckSyncCard(stuck) {
+    const card = el('div', { className: 'failure-card sev-warning' });
+    const header = el('div', { className: 'failure-card-header' });
+    const title = el('div', { className: 'failure-filename' });
+    title.textContent = (stuck.entityType || 'event') + ': ' + (stuck.entityId || '').substring(0, 24);
+    header.appendChild(title);
+
+    const time = el('span', { className: 'failure-time' });
+    time.textContent = relativeTime(stuck.lastAttemptAt || stuck.createdAt);
+    header.appendChild(time);
+    card.appendChild(header);
+
+    const reason = el('div', { className: 'failure-reason' });
+    reason.textContent = stuck.reason
+      ? `Cloud rejeitou (${stuck.attempts} tentativa${stuck.attempts === 1 ? '' : 's'}): ${stuck.reason}`
+      : 'Evento aguardando sincronização há mais de 5 minutos';
+    card.appendChild(reason);
+
+    if (stuck.entityType === 'slide' || stuck.entityType === 'preview') {
+      const slideId = stuck.entityType === 'slide'
+        ? stuck.entityId
+        : (stuck.entityId || '').replace(/^preview:/, '');
+      if (slideId) {
+        const actions = el('div', { className: 'failure-actions' });
+        const btn = el('button', { className: 'btn-failure-details' });
+        btn.textContent = 'Ver timeline';
+        btn.addEventListener('click', () => openPipelineModal(slideId, slideId.substring(0, 12)));
+        actions.appendChild(btn);
+        card.appendChild(actions);
+      }
+    }
+
+    return card;
+  }
+
+  function initFailuresControls() {
+    const btn = $('#refreshFailures');
+    if (btn) btn.addEventListener('click', fetchFailures);
+  }
+
+  // =====================
+  //  Pipeline Timeline Modal
+  // =====================
+  function openPipelineModal(slideId, filenameHint) {
+    const overlay = $('#pipelineModal');
+    const title = $('#pipelineModalTitle');
+    const subtitle = $('#pipelineModalSubtitle');
+    const body = $('#pipelineModalBody');
+    if (!overlay) return;
+
+    setText(title, 'Timeline da Lâmina');
+    setText(subtitle, filenameHint || slideId.substring(0, 16));
+    clearChildren(body);
+    body.appendChild(el('div', { className: 'pipeline-loading', textContent: 'Carregando...' }));
+
+    overlay.classList.add('active');
+
+    fetch('/v1/slides/' + encodeURIComponent(slideId) + '/pipeline')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(r.statusText)))
+      .then(data => renderPipelineTimeline(data))
+      .catch(err => {
+        clearChildren(body);
+        body.appendChild(el('div', { className: 'pipeline-error',
+          textContent: 'Erro ao carregar: ' + err.message }));
+      });
+  }
+
+  function closePipelineModal() {
+    const overlay = $('#pipelineModal');
+    if (overlay) overlay.classList.remove('active');
+  }
+
+  function renderPipelineTimeline(data) {
+    const body = $('#pipelineModalBody');
+    const subtitle = $('#pipelineModalSubtitle');
+    if (!body) return;
+
+    setText(subtitle, (data.slide.originalFilename || data.slide.slideId.substring(0, 16))
+      + ' — ' + (data.slide.format || '?').toUpperCase()
+      + ' — status: ' + statusLabel(data.slide.status));
+
+    clearChildren(body);
+
+    // Advice block
+    if (data.advice) {
+      const advBox = el('div', { className: 'pipeline-advice ' + severityClass(data.advice.severity) });
+      const advTitle = el('div', { className: 'pipeline-advice-title' });
+      advTitle.textContent = '⚠ ' + data.advice.reason;
+      advBox.appendChild(advTitle);
+      const advSug = el('div', { className: 'pipeline-advice-suggestion' });
+      advSug.textContent = data.advice.suggestion;
+      advBox.appendChild(advSug);
+      body.appendChild(advBox);
+    }
+
+    // Timeline of events
+    const eventsTitle = el('h3', { className: 'pipeline-section-title', textContent: 'Eventos do pipeline' });
+    body.appendChild(eventsTitle);
+
+    if (!data.events || data.events.length === 0) {
+      body.appendChild(el('div', { className: 'pipeline-empty',
+        textContent: 'Nenhum evento registrado para esta lâmina.' }));
+    } else {
+      const tl = el('div', { className: 'pipeline-timeline' });
+      for (const ev of data.events) {
+        const item = el('div', { className: 'pipeline-event level-' + ev.level });
+        const dot = el('span', { className: 'pipeline-event-dot' });
+        item.appendChild(dot);
+
+        const content = el('div', { className: 'pipeline-event-content' });
+        const stage = el('span', { className: 'pipeline-event-stage' });
+        stage.textContent = stageLabel(ev.stage);
+        content.appendChild(stage);
+
+        const msg = el('div', { className: 'pipeline-event-message' });
+        msg.textContent = ev.message || '(sem mensagem)';
+        content.appendChild(msg);
+
+        if (ev.details) {
+          const det = el('pre', { className: 'pipeline-event-details' });
+          try {
+            det.textContent = JSON.stringify(ev.details, null, 2);
+          } catch {
+            det.textContent = String(ev.details);
+          }
+          content.appendChild(det);
+        }
+
+        item.appendChild(content);
+
+        const time = el('span', { className: 'pipeline-event-time' });
+        const d = new Date(ev.createdAt);
+        time.textContent = formatTime(d) + ' · ' + relativeTime(ev.createdAt);
+        item.appendChild(time);
+
+        tl.appendChild(item);
+      }
+      body.appendChild(tl);
+    }
+
+    // Jobs list
+    if (data.jobs && data.jobs.length > 0) {
+      body.appendChild(el('h3', { className: 'pipeline-section-title', textContent: 'Jobs' }));
+      const jobsTable = el('div', { className: 'pipeline-jobs' });
+      for (const j of data.jobs) {
+        const row = el('div', { className: 'pipeline-job-row status-' + j.status });
+        const left = el('div');
+        left.textContent = j.type;
+        const status = el('span', { className: 'pipeline-job-status' });
+        status.textContent = j.status;
+        const time = el('span', { className: 'pipeline-job-time' });
+        time.textContent = relativeTime(j.updatedAt || j.createdAt);
+        row.appendChild(left);
+        row.appendChild(status);
+        row.appendChild(time);
+        if (j.error) {
+          const err = el('div', { className: 'pipeline-job-error' });
+          err.textContent = j.error;
+          row.appendChild(err);
+        }
+        jobsTable.appendChild(row);
+      }
+      body.appendChild(jobsTable);
+    }
+
+    // Sync failures
+    if (data.syncFailures && data.syncFailures.length > 0) {
+      body.appendChild(el('h3', { className: 'pipeline-section-title',
+        textContent: 'Falhas de sincronização' }));
+      for (const sf of data.syncFailures) {
+        const row = el('div', { className: 'pipeline-sync-failure' });
+        const head = el('div');
+        head.textContent = sf.entityType + ' · ' + sf.attempts + ' tentativa(s)' +
+          (sf.isPermanent ? ' · permanente' : '');
+        row.appendChild(head);
+        const r = el('div', { className: 'pipeline-sync-reason' });
+        r.textContent = sf.reason || '(sem motivo)';
+        row.appendChild(r);
+        body.appendChild(row);
+      }
+    }
+  }
+
+  function initPipelineModal() {
+    const overlay = $('#pipelineModal');
+    const closeBtn = $('#pipelineModalClose');
+    if (closeBtn) closeBtn.addEventListener('click', closePipelineModal);
+    if (overlay) {
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closePipelineModal();
+      });
+    }
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && overlay && overlay.classList.contains('active')) {
+        closePipelineModal();
+      }
+    });
+  }
+
+  // =====================
   //  Initialization
   // =====================
   function init() {
@@ -1314,6 +1725,8 @@
     initActivityControls();
     initSettingsForm();
     initMaintenance();
+    initFailuresControls();
+    initPipelineModal();
     startDashboardPolling();
     initSSE();
   }

@@ -11,6 +11,7 @@ import { uploadSlideToCloud } from './cloud-uploader.js';
 import { generateBigTIFF, cleanupBigTIFF, checkDiskSpace, calculateParallelSlots } from './bigtiff-generator.js';
 import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
+import { pipelineLog } from './lib/pipeline-log.js';
 
 // Pipeline mode: 'legacy_dzi' (default) or 'bigtiff_iiif'
 const PIPELINE_MODE = process.env.EDGE_PIPELINE_MODE || 'legacy_dzi';
@@ -60,6 +61,13 @@ function getPool() {
     pool = new Pool({ connectionString: databaseUrl });
   }
   return pool;
+}
+
+/**
+ * Shorthand for pipelineLog with the worker's pool.
+ */
+async function logEvent(slideId, stage, level, message, details) {
+  return pipelineLog(getPool(), slideId, stage, level, message, details);
 }
 
 async function updateJob(jobId, updates) {
@@ -190,12 +198,14 @@ async function processJob(job) {
       console.error(`[worker] ${msg} - aborting ${job.type} for ${job.slideId.substring(0, 12)}`);
       await updateJob(job.jobId, { status: 'failed', error: msg });
       await updateSlide(job.slideId, { status: 'failed' });
+      await logEvent(job.slideId, job.type.toLowerCase(), 'error', msg, { rawPath: job.rawPath });
       return;
     }
   }
 
   await updateJob(job.jobId, { status: 'running' });
   await updateSlide(job.slideId, { status: 'processing' });
+  await logEvent(job.slideId, job.type.toLowerCase(), 'info', `${job.type} started`, { format: job.format });
 
   try {
     if (job.type === 'P0') {
@@ -254,6 +264,9 @@ async function processJob(job) {
       }
 
       console.log(`P0 complete for ${job.slideId.substring(0, 12)}: ${result.width}x${result.height}, maxLevel=${result.maxLevel}`);
+      await logEvent(job.slideId, 'p0', 'info', 'P0 complete', {
+        width: result.width, height: result.height, maxLevel: result.maxLevel
+      });
 
       // NOTE: SlideRegistered outbox event is emitted after TILEGEN completes,
       // so the slide only appears in the extension when fully navigable.
@@ -280,6 +293,8 @@ async function processJob(job) {
           }
         } catch (enqueueErr) {
           console.error(`Failed to enqueue ${jobType} (non-fatal): ${enqueueErr.message}`);
+          await logEvent(job.slideId, jobType.toLowerCase(), 'error',
+            `Failed to enqueue ${jobType}: ${enqueueErr.message}`);
         }
       }
 
@@ -301,6 +316,8 @@ async function processJob(job) {
         } catch (previewErr) {
           // Non-fatal: log and continue
           console.error(`Preview publish failed (non-fatal): ${previewErr.message}`);
+          await logEvent(job.slideId, 'preview', 'error',
+            `Preview publish failed: ${previewErr.message}`);
         }
       }
     } else if (job.type === 'P1') {
@@ -334,6 +351,8 @@ async function processJob(job) {
           error: cleanupErr.message,
           timestamp: Date.now()
         });
+        await logEvent(job.slideId, 'cleanup', 'error',
+          `Cloud cleanup failed: ${cleanupErr.message}`);
       }
       // Note: CLEANUP jobs don't have a database job record
     } else if (job.type === 'PREVIEW_REPUBLISH') {
@@ -441,10 +460,15 @@ async function processJob(job) {
           }
         } catch (outboxErr) {
           console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
+          await logEvent(job.slideId, 'outbox', 'error',
+            `Failed to emit SlideRegistered: ${outboxErr.message}`);
         }
 
         // Restore slide status to 'ready' after TILEGEN completes
         await updateSlide(job.slideId, { status: 'ready' });
+        await logEvent(job.slideId, 'tilegen', 'info', 'TILEGEN complete', {
+          tileCount: result.tileCount, elapsedMs: result.elapsed
+        });
 
         // Cloud upload: send full tile pyramid to Wasabi and notify cloud
         // IMPORTANT: Must complete BEFORE persistTilesBackground, which deletes hot tiles
@@ -532,6 +556,8 @@ async function processJob(job) {
 
               } catch (manifestErr) {
                 console.error(`[UPLOAD] Failed to emit full preview event (non-fatal): ${manifestErr.message}`);
+                await logEvent(job.slideId, 'outbox', 'warn',
+                  `Failed to emit preview:published: ${manifestErr.message}`);
               }
             }
           } catch (uploadErr) {
@@ -542,6 +568,8 @@ async function processJob(job) {
               timestamp: Date.now(),
             }).catch(() => {});
             console.error(`[UPLOAD] Failed for ${job.slideId.substring(0, 12)} (non-fatal): ${uploadErr.message}`);
+            await logEvent(job.slideId, 'cloud_upload', 'error',
+              `Cloud upload failed: ${uploadErr.message}`);
           }
         }
 
@@ -558,9 +586,22 @@ async function processJob(job) {
         }
       } catch (tilegenErr) {
         console.error(`TILEGEN failed for ${job.slideId.substring(0, 12)}: ${tilegenErr.message}`);
-        // Restore status to 'ready' — P0 completed, tiles served on-demand until retry
-        await updateSlide(job.slideId, { tilegen_status: 'failed', status: 'ready' });
+        // FIX: previously this marked the slide as 'ready', causing it to appear
+        // as completed in the dashboard while the cloud never received tiles.
+        // Mark the slide as 'failed' so it is visible as a problem and so the
+        // SlideRegistered outbox event is NOT emitted (it's emitted in the try
+        // block above, before this catch).
+        await updateSlide(job.slideId, { tilegen_status: 'failed', status: 'failed' });
         await updateJob(job.jobId, { status: 'failed', error: tilegenErr.message });
+        await logEvent(job.slideId, 'tilegen', 'error',
+          `TILEGEN failed: ${tilegenErr.message}`,
+          { stack: tilegenErr.stack ? tilegenErr.stack.split('\n').slice(0, 3).join('\n') : null });
+        await publishEvent('slide:failed', {
+          slideId: job.slideId,
+          stage: 'tilegen',
+          error: tilegenErr.message,
+          timestamp: Date.now()
+        }).catch(() => {});
       }
     } else if (job.type === 'BIGTIFF') {
       // BigTIFF pipeline: generate single pyramidal BigTIFF + upload to S3
@@ -637,6 +678,8 @@ async function processJob(job) {
           }
         } catch (outboxErr) {
           console.error(`[BIGTIFF] Failed to emit SlideRegistered (non-fatal): ${outboxErr.message}`);
+          await logEvent(job.slideId, 'outbox', 'error',
+            `Failed to emit SlideRegistered: ${outboxErr.message}`);
         }
 
         // Phase 5: Emit preview:published event (for cloud to know where the BigTIFF is)
@@ -682,10 +725,17 @@ async function processJob(job) {
           }
         } catch (previewErr) {
           console.error(`[BIGTIFF] Failed to emit preview event (non-fatal): ${previewErr.message}`);
+          await logEvent(job.slideId, 'outbox', 'warn',
+            `Failed to emit preview:published: ${previewErr.message}`);
         }
 
         // Restore slide status to 'ready'
         await updateSlide(job.slideId, { status: 'ready' });
+        await logEvent(job.slideId, 'bigtiff', 'info', 'BigTIFF pipeline complete', {
+          bigtiffSize: genResult.size,
+          generationMs: genResult.elapsed,
+          uploadMs: uploadResult.elapsed
+        });
 
         await publishEvent('bigtiff:ready', {
           slideId: job.slideId,
@@ -707,8 +757,19 @@ async function processJob(job) {
         console.log(`[BIGTIFF] Pipeline complete for ${job.slideId.substring(0, 12)}: ${(genResult.size / 1024 / 1024).toFixed(1)} MB, gen=${(genResult.elapsed / 1000).toFixed(1)}s, upload=${((uploadResult.elapsed || 0) / 1000).toFixed(1)}s, total=${(totalElapsed / 1000).toFixed(1)}s`);
       } catch (bigtiffErr) {
         console.error(`[BIGTIFF] Failed for ${job.slideId.substring(0, 12)}: ${bigtiffErr.message}`);
-        await updateSlide(job.slideId, { tilegen_status: 'failed', status: 'ready' });
+        // FIX: same bug as TILEGEN — previously marked as 'ready' causing
+        // silent cloud sync failures. Mark as 'failed' so it's visible.
+        await updateSlide(job.slideId, { tilegen_status: 'failed', status: 'failed' });
         await updateJob(job.jobId, { status: 'failed', error: bigtiffErr.message });
+        await logEvent(job.slideId, 'bigtiff', 'error',
+          `BigTIFF pipeline failed: ${bigtiffErr.message}`,
+          { stack: bigtiffErr.stack ? bigtiffErr.stack.split('\n').slice(0, 3).join('\n') : null });
+        await publishEvent('slide:failed', {
+          slideId: job.slideId,
+          stage: 'bigtiff',
+          error: bigtiffErr.message,
+          timestamp: Date.now()
+        }).catch(() => {});
         // Clean up temp file on failure
         await cleanupBigTIFF(job.slideId).catch(() => {});
       }
@@ -718,11 +779,62 @@ async function processJob(job) {
     console.error(err.stack);
     await updateJob(job.jobId, { status: 'failed', error: err.message });
     await updateSlide(job.slideId, { status: 'failed' });
+    await logEvent(job.slideId, (job.type || 'unknown').toLowerCase(), 'error',
+      `${job.type} failed: ${err.message}`,
+      { stack: err.stack ? err.stack.split('\n').slice(0, 3).join('\n') : null });
+    await publishEvent('slide:failed', {
+      slideId: job.slideId,
+      stage: (job.type || 'unknown').toLowerCase(),
+      error: err.message,
+      timestamp: Date.now()
+    }).catch(() => {});
   }
 }
 
 /**
- * Re-queue TILEGEN for slides that failed (e.g., tmpfs overflow).
+ * Wait for PostgreSQL to be ready (it may start after the processor).
+ */
+async function waitForDatabase() {
+  let retries = 30;
+  while (retries > 0) {
+    try {
+      await getPool().query('SELECT 1');
+      return;
+    } catch (err) {
+      retries--;
+      console.log(`[STARTUP] Database not ready, retrying... (${retries} left)`);
+      await new Promise(r => setTimeout(r, 2000));
+    }
+  }
+  throw new Error('Database not available after 60s');
+}
+
+/**
+ * Reset orphaned jobs left in 'running' status from a previous crash.
+ * Must be called at startup before processing new jobs.
+ */
+async function resetOrphanedJobs() {
+  const result = await getPool().query(
+    `UPDATE jobs SET status = 'failed', error = 'orphaned: worker restarted', updated_at = NOW()
+     WHERE status = 'running'
+     RETURNING id, slide_id, type`
+  );
+  if (result.rowCount > 0) {
+    for (const job of result.rows) {
+      console.log(`[STARTUP] Reset orphaned ${job.type} job ${job.id} for slide ${job.slide_id.substring(0, 12)}`);
+    }
+    // Also reset slides stuck in 'processing' status due to orphaned jobs
+    await getPool().query(
+      `UPDATE slides SET status = 'ready'
+       WHERE status = 'processing'
+       AND id IN (SELECT slide_id FROM jobs WHERE error = 'orphaned: worker restarted' AND status = 'failed')`
+    );
+    console.log(`[STARTUP] Reset ${result.rowCount} orphaned job(s)`);
+  }
+}
+
+/**
+ * Re-queue TILEGEN/BIGTIFF for slides that failed or were interrupted.
  * Called once at startup so failed slides are automatically retried.
  */
 async function retryFailedTilegen() {
@@ -789,6 +901,12 @@ async function worker() {
     }
   }
 
+  // Wait for PostgreSQL before doing any DB operations
+  await waitForDatabase();
+
+  // Reset any jobs left in 'running' from a previous crash/restart
+  await resetOrphanedJobs();
+
   // Retry any previously failed TILEGEN jobs
   await retryFailedTilegen();
 
@@ -835,12 +953,28 @@ async function worker() {
   }
 }
 
-// Graceful shutdown
+// Graceful shutdown with timeout (Docker sends SIGKILL after 10s by default)
 process.on('SIGTERM', async () => {
-  console.log('Shutting down worker...');
+  console.log('[SHUTDOWN] Worker received SIGTERM');
   if (activeBigtiffJobs.size > 0) {
-    console.log(`Waiting for ${activeBigtiffJobs.size} active BigTIFF job(s) to finish...`);
-    await Promise.allSettled([...activeBigtiffJobs]);
+    console.log(`[SHUTDOWN] Waiting up to 7s for ${activeBigtiffJobs.size} active BigTIFF job(s)...`);
+    const timeout = new Promise(r => setTimeout(r, 7000));
+    await Promise.race([Promise.allSettled([...activeBigtiffJobs]), timeout]);
+  }
+  // Mark any still-running jobs as failed so they get retried on next startup
+  try {
+    const result = await getPool().query(
+      `UPDATE jobs SET status = 'failed', error = 'interrupted: worker shutdown', updated_at = NOW()
+       WHERE status = 'running'
+       RETURNING id, type, slide_id`
+    );
+    if (result.rowCount > 0) {
+      for (const job of result.rows) {
+        console.log(`[SHUTDOWN] Marked ${job.type} job ${job.id} as failed (slide ${job.slide_id.substring(0, 12)})`);
+      }
+    }
+  } catch (err) {
+    console.error(`[SHUTDOWN] Failed to mark jobs: ${err.message}`);
   }
   if (redis) await redis.quit();
   if (pool) await pool.end();

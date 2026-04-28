@@ -10,6 +10,7 @@ import { createSlide, createJob, updateSlide } from '../db/slides.js';
 import { eventBus } from './events.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { loadConfig, getConfig } from '../lib/edge-config.js';
+import { pipelineLog } from './pipeline-log.js';
 
 // Supported formats by category
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png'];
@@ -215,12 +216,21 @@ async function processFile(filePath) {
     });
 
     console.log(`[ingest] P0 enqueued for ${slideId.substring(0, 12)}... (${originalName}) [${format}]`);
+    await pipelineLog(slideId, 'ingest', 'info', 'Slide ingested and P0 enqueued', {
+      filename: originalName, format, sizeBytes: srcSize
+    });
 
     // Emit SSE event for slide import
     eventBus.emitSlideImport(slideId, originalName, format);
   } catch (err) {
-    // Ingest failed: original stays in inbox, no jobs enqueued
+    // Ingest failed: original stays in inbox, no jobs enqueued.
+    // Log to pipeline_events keyed by filename — we don't have a slideId yet
+    // because hashing/createSlide may have failed.
     console.error(`[ingest] FAILED for ${originalName}: ${err.message}`);
+    eventBus.emit('sse', {
+      event: 'ingest:failed',
+      data: { filename: originalName, error: err.message, timestamp: Date.now() }
+    });
   }
 }
 
