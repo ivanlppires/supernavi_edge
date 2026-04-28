@@ -152,11 +152,36 @@ export async function uploadBigTIFF(slideId, bigtiffPath, slideMetadata) {
             const data = await readPart(fd, partNum, effectivePartSize, fileSize);
             for (let attempt = 1; attempt <= 3; attempt++) {
               try {
-                const res = await fetch(urls[partNum], {
+                let urlForAttempt = urls[partNum];
+                // On retry, request a fresh presigned URL (may have expired)
+                if (attempt > 1) {
+                  try {
+                    const refreshRes = await fetch(`${CLOUD_API_URL}/edge/multipart/part-urls`, {
+                      method: 'POST',
+                      headers: cloudHeaders(),
+                      body: JSON.stringify({ slideId, archiveKey: bigtiffKey, uploadId, parts: [partNum] }),
+                    });
+                    if (refreshRes.ok) {
+                      const j = await refreshRes.json();
+                      if (j.urls && j.urls[partNum]) urlForAttempt = j.urls[partNum];
+                    }
+                  } catch { /* fall through with original URL */ }
+                }
+                const res = await fetch(urlForAttempt, {
                   method: 'PUT',
                   body: data,
                 });
-                if (!res.ok) throw new Error(`PUT part ${partNum}: ${res.status}`);
+                if (!res.ok) {
+                  // Capture S3 error body — it tells us *why* (Request has expired,
+                  // SignatureDoesNotMatch, AccessDenied, etc.). Without this we
+                  // only see "403" and can't diagnose. Truncate to keep messages
+                  // bounded but keep the S3 error code visible.
+                  const body = await res.text().catch(() => '');
+                  const codeMatch = body.match(/<Code>([^<]+)<\/Code>/);
+                  const msgMatch = body.match(/<Message>([^<]+)<\/Message>/);
+                  const detail = codeMatch ? `${codeMatch[1]}: ${msgMatch ? msgMatch[1] : ''}`.trim() : body.substring(0, 200);
+                  throw new Error(`PUT part ${partNum}: ${res.status}${detail ? ` ${detail}` : ''}`);
+                }
                 const etag = res.headers.get('etag');
                 return { partNumber: partNum, etag };
               } catch (err) {

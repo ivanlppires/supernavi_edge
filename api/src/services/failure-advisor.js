@@ -8,7 +8,68 @@
  *             'check_cloud' | 'wait_retry' | 'check_logs' | 'manual'
  */
 
+// Rules are evaluated in order — first match wins. Specific rules MUST come
+// before generic stage-level catch-alls (e.g. "PUT part 6: 403" must hit the
+// 403 rule, not the generic "bigtiff failed" rule).
 const RULES = [
+  // ── HTTP errors (highest priority — they tell us *exactly* what went wrong)
+  {
+    match: /request.*has expired|expired (signature|url|token)|signature.*expired/i,
+    stage: '*',
+    severity: 'warning',
+    action: 'reprocess',
+    reason: 'URL pré-assinada expirou durante o upload.',
+    suggestion: 'Upload demorado fez a URL expirar. Re-processe — uploader busca novas URLs em cada tentativa.',
+  },
+  {
+    match: /signature.*does not match|signaturedoesnotmatch|invalid.*signature/i,
+    stage: '*',
+    severity: 'critical',
+    action: 'check_credentials',
+    reason: 'Assinatura S3 inválida (provavelmente clock skew ou credencial errada no cloud).',
+    suggestion: 'Verifique sincronização de relógio (NTP) no edge e no cloud. Confirme S3_ACCESS_KEY/S3_SECRET_KEY no cloud.',
+  },
+  {
+    match: /\b403\b|forbidden|access denied|invalid.*credential/i,
+    stage: '*',
+    severity: 'critical',
+    action: 'check_credentials',
+    reason: 'Cloud/S3 retornou 403 (sem permissão).',
+    suggestion: 'Verifique credenciais Wasabi no cloud, política do bucket, e EDGE_KEY no .env do edge. Pode também ser URL pré-assinada expirada — tente re-processar.',
+  },
+  {
+    match: /\b401\b|unauthor/i,
+    stage: '*',
+    severity: 'critical',
+    action: 'check_credentials',
+    reason: 'Cloud retornou 401 (não autenticado).',
+    suggestion: 'EDGE_KEY pode estar inválido ou expirado. Verifique no painel admin do cloud e atualize o .env do edge.',
+  },
+  {
+    match: /404.*(bucket|nosuchbucket)|nosuchbucket/i,
+    stage: '*',
+    severity: 'critical',
+    action: 'check_credentials',
+    reason: 'Bucket S3/Wasabi não encontrado.',
+    suggestion: 'Verifique S3_BUCKET no cloud e que o bucket existe na região configurada.',
+  },
+  {
+    match: /econnrefused|enotfound|getaddrinfo|network.*(error|unreachable)|connect.*timeout/i,
+    stage: '*',
+    severity: 'warning',
+    action: 'check_cloud',
+    reason: 'Não foi possível alcançar o cloud / S3 endpoint.',
+    suggestion: 'Verifique a conexão de internet e o status do tunnel. O sync tentará novamente automaticamente.',
+  },
+  {
+    match: /\b5\d\d\b|internal server error|service unavailable|bad gateway/i,
+    stage: '*',
+    severity: 'warning',
+    action: 'wait_retry',
+    reason: 'Cloud/S3 retornou erro interno (5xx).',
+    suggestion: 'Erro temporário do servidor. Re-processe ou aguarde alguns minutos.',
+  },
+
   // ── Disk / filesystem ────────────────────────────────────────────────────
   {
     match: /ENOSPC|no space left|insufficient disk space/i,
@@ -61,7 +122,15 @@ const RULES = [
     suggestion: 'Re-processe. Se ocorrer repetidamente, aumente BIGTIFF_TIMEOUT_MS ou TILEGEN_TIMEOUT_MS.',
   },
 
-  // ── BigTIFF specific ────────────────────────────────────────────────────
+  // ── BigTIFF specific (catch-all — must come AFTER http error rules) ─────
+  {
+    match: /put part \d+/i,
+    stage: '*',
+    severity: 'warning',
+    action: 'reprocess',
+    reason: 'Falha durante upload multipart do BigTIFF (parte específica).',
+    suggestion: 'Re-processe. Se persistir em partes diferentes, indica URL pré-assinada expirando ou clock skew.',
+  },
   {
     match: /bigtiff.*(failed|error)/i,
     stage: 'bigtiff',
@@ -69,32 +138,6 @@ const RULES = [
     action: 'reprocess',
     reason: 'Geração do BigTIFF piramidal falhou.',
     suggestion: 'Re-processe. Verifique espaço em /data/tmp e logs do processor.',
-  },
-
-  // ── Cloud upload (Wasabi S3) ────────────────────────────────────────────
-  {
-    match: /403|forbidden|signature.*does not match|invalid.*credential/i,
-    stage: '*',
-    severity: 'critical',
-    action: 'check_credentials',
-    reason: 'Credenciais Wasabi (S3) inválidas ou sem permissão.',
-    suggestion: 'Verifique S3_ACCESS_KEY/S3_SECRET_KEY no .env. Confirme que a chave tem acesso ao bucket configurado.',
-  },
-  {
-    match: /404.*(bucket|nosuchbucket)/i,
-    stage: '*',
-    severity: 'critical',
-    action: 'check_credentials',
-    reason: 'Bucket S3/Wasabi não encontrado.',
-    suggestion: 'Verifique S3_BUCKET no .env e que o bucket existe na região configurada.',
-  },
-  {
-    match: /econnrefused|enotfound|getaddrinfo|network.*(error|unreachable)/i,
-    stage: '*',
-    severity: 'warning',
-    action: 'check_cloud',
-    reason: 'Não foi possível alcançar o cloud / S3 endpoint.',
-    suggestion: 'Verifique a conexão de internet e o status do tunnel. O sync tentará novamente automaticamente.',
   },
   {
     match: /cloud upload (failed|error)/i,
@@ -122,15 +165,6 @@ const RULES = [
     reason: 'Cloud já tinha registrado este evento (duplicado).',
     suggestion: 'Nenhuma ação necessária — o registro foi marcado como sincronizado.',
   },
-  {
-    match: /unauthor|401/i,
-    stage: 'sync',
-    severity: 'critical',
-    action: 'check_credentials',
-    reason: 'Token de sincronização inválido ou expirado.',
-    suggestion: 'Verifique SYNC_TOKEN/EDGE_KEY no .env e a chave no painel admin do cloud.',
-  },
-
   // ── Watcher / ingest ────────────────────────────────────────────────────
   {
     match: /empty file|size 0/i,
