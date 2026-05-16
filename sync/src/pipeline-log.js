@@ -20,6 +20,14 @@ export async function pipelineLog(pool, slideId, stage, level, message, details 
          WHERE id = $3`,
         [message || 'sync error', stage, slideId]
       );
+    } else if (level === 'info') {
+      // Stage made progress — supersede any prior error from the same stage.
+      await pool.query(
+        `UPDATE slides
+           SET latest_error = NULL, latest_error_stage = NULL, latest_error_at = NULL
+         WHERE id = $1 AND latest_error_stage = $2`,
+        [slideId, stage]
+      );
     }
   } catch (err) {
     console.error(`[pipeline-log] failed (non-fatal): ${err.message}`);

@@ -34,6 +34,15 @@ export async function pipelineLog(slideId, stage, level, message, details = null
         event: 'pipeline:error',
         data: { slideId, stage, message, timestamp: Date.now() }
       });
+    } else if (level === 'info') {
+      // Stage made progress — supersede any prior error from the same stage.
+      // A subsequent failure will re-set latest_error via the branch above.
+      await query(
+        `UPDATE slides
+           SET latest_error = NULL, latest_error_stage = NULL, latest_error_at = NULL
+         WHERE id = $1 AND latest_error_stage = $2`,
+        [slideId, stage]
+      );
     }
   } catch (err) {
     console.error(`[pipeline-log] failed to record event (non-fatal): ${err.message}`);

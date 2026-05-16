@@ -62,6 +62,17 @@ const RULES = [
     suggestion: 'Verifique a conexão de internet e o status do tunnel. O sync tentará novamente automaticamente.',
   },
   {
+    // undici (Node's fetch) surfaces low-level socket errors as generic
+    // "TypeError: fetch failed" — usually a transient TCP reset or DNS hiccup
+    // during S3 multipart upload. Must come before the bigtiff catch-all.
+    match: /fetch failed|undici|socket hang up|other side closed|econnreset/i,
+    stage: '*',
+    severity: 'warning',
+    action: 'reprocess',
+    reason: 'Erro de rede transitório durante upload (fetch/undici falhou).',
+    suggestion: 'Conexão caiu durante upload para o S3. Re-processe — costuma resolver. Se persistir, verifique tunnel e estabilidade da internet.',
+  },
+  {
     match: /\b5\d\d\b|internal server error|service unavailable|bad gateway/i,
     stage: '*',
     severity: 'warning',
