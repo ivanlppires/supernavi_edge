@@ -19,7 +19,7 @@ import { join, extname } from 'path';
 import { constants } from 'fs';
 import { hashFile } from '../lib/hash.js';
 import { parseDsmeta, parseMoticPath } from '../lib/dsmeta-parser.js';
-import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides, deduplicateSlideLabel } from '../db/slides.js';
+import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides, deduplicateSlideLabel, setSlideReviewStatus } from '../db/slides.js';
 import { query } from '../db/index.js';
 import { ocrLabel, isOcrEnabled } from '../lib/label-ocr.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
@@ -151,7 +151,10 @@ async function processNewFile(filePath) {
     format,
   });
 
-  // Set external fields + OCR status
+  // Every new slide starts as pending review (technician confirms name +
+  // context). Legacy ocrStatus stays for backward compat in the schema.
+  await setSlideReviewStatus(slideId, 'pending');
+
   const slideUpdates = { ...(externalFields || {}), ocrStatus, dsmetaPath };
   if (Object.values(slideUpdates).some(v => v !== null && v !== undefined)) {
     await updateSlideOcr(slideId, slideUpdates);
