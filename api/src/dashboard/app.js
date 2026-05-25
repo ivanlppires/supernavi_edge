@@ -1332,6 +1332,12 @@
       addActivityEvent('ingest:failed', data);
     });
 
+    // Named event: pending:count-changed (review queue)
+    eventSource.addEventListener('pending:count-changed', (e) => {
+      const data = safeParseJSON(e.data);
+      if (data && typeof data.count === 'number') updatePendingBadge(data.count);
+    });
+
     // Generic message event (for any unnamed events)
     eventSource.addEventListener('message', (e) => {
       const data = safeParseJSON(e.data);
@@ -1712,6 +1718,27 @@
       if (e.key === 'Escape' && overlay && overlay.classList.contains('active')) {
         closePipelineModal();
       }
+    });
+  }
+
+  // =====================
+  //  Review queue: pending badge
+  // =====================
+  const pendingBadge = document.getElementById('pendingBadge');
+  const pendingCountEl = document.getElementById('pendingCount');
+
+  function updatePendingBadge(count) {
+    if (!pendingBadge || !pendingCountEl) return;
+    pendingCountEl.textContent = String(count);
+    pendingBadge.classList.toggle('hidden', count === 0);
+  }
+
+  // Initial fetch on page load
+  fetch('/v1/pending-slides').then(r => r.json()).then(d => updatePendingBadge(d.total)).catch(() => {});
+
+  if (pendingBadge) {
+    pendingBadge.addEventListener('click', () => {
+      document.dispatchEvent(new CustomEvent('open-pending-panel'));
     });
   }
 

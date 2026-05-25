@@ -5,6 +5,7 @@ import * as ctxDb from '../db/case-contexts.js';
 import { query } from '../db/index.js';
 import { confirmBodySchema } from '../lib/clinical-context-schema.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
+import { eventBus } from '../services/events.js';
 
 async function defaultEmitSlideRegistered(slideId) {
   const r = await query(
@@ -56,6 +57,14 @@ export default async function pendingSlidesRoutes(fastify, opts = {}) {
     upsertCaseContext: ctxDb.upsertCaseContext,
     emitSlideRegistered: defaultEmitSlideRegistered,
     emitClinicalContextSet: defaultEmitClinicalContextSet,
+    emitPendingCountChanged: async () => {
+      try {
+        const n = await slidesDb.countPendingReviewSlides();
+        eventBus.emitPendingCountChanged(n);
+      } catch (err) {
+        console.warn(`[Pending] Failed to broadcast pending count: ${err.message}`);
+      }
+    },
     ...opts.deps,
   };
 
@@ -142,6 +151,7 @@ export default async function pendingSlidesRoutes(fastify, opts = {}) {
 
     await deps.setSlideReviewStatus(slide.id, 'confirmed');
     await deps.emitSlideRegistered(slide.id);
+    await deps.emitPendingCountChanged();
 
     return { ok: true, slide_id: slide.id, filename: newFilename, case_base: caseBase };
   });
@@ -153,6 +163,7 @@ export default async function pendingSlidesRoutes(fastify, opts = {}) {
       return reply.code(409).send({ error: 'slide is not pending review' });
     }
     await deps.setSlideReviewStatus(slide.id, 'rescan');
+    await deps.emitPendingCountChanged();
     return { ok: true, slide_id: slide.id };
   });
 }

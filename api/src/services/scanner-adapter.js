@@ -155,6 +155,14 @@ async function processNewFile(filePath) {
   // context). Legacy ocrStatus stays for backward compat in the schema.
   await setSlideReviewStatus(slideId, 'pending');
 
+  try {
+    const { countPendingReviewSlides } = await import('../db/slides.js');
+    const n = await countPendingReviewSlides();
+    eventBus.emitPendingCountChanged(n);
+  } catch (err) {
+    console.warn(`[Scanner] Failed to broadcast pending count: ${err.message}`);
+  }
+
   const slideUpdates = { ...(externalFields || {}), ocrStatus, dsmetaPath };
   if (Object.values(slideUpdates).some(v => v !== null && v !== undefined)) {
     await updateSlideOcr(slideId, slideUpdates);
