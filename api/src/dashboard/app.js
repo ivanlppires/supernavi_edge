@@ -1954,6 +1954,242 @@
     });
   }
 
+  // === Review queue: context form helpers (Task 14) ================
+  const SUBTIPO_SUGGESTIONS = [
+    'biopsia_pele', 'biopsia_gastrica', 'biopsia_intestinal',
+    'biopsia_prostatica', 'biopsia_mamaria', 'biopsia_hepatica',
+    'citologia_cervical', 'citologia_urinaria', 'puncao_aspirativa',
+  ];
+
+  function examTypeFromCaseBase(caseBase) {
+    if (!caseBase) return '';
+    if (caseBase.startsWith('C')) return 'CITO';
+    return 'AP';
+  }
+
+  function caseBaseFromInput(value) {
+    const v = (value || '').toUpperCase().replace(/[\s\-_.]/g, '');
+    const m = v.match(/^((?:AP|PA|IM|C)\d{6,12})/);
+    if (!m) return null;
+    return m[1].replace(/^PA/, 'AP');
+  }
+
+  function makeField(labelText, inputEl, hintText) {
+    const label = document.createElement('label');
+    label.className = 'review-field';
+    const span = document.createElement('span');
+    span.textContent = labelText;
+    label.appendChild(span);
+    label.appendChild(inputEl);
+    if (hintText) {
+      const small = document.createElement('small');
+      small.textContent = hintText;
+      label.appendChild(small);
+    }
+    return label;
+  }
+
+  function buildExistingContextBlock(caseBase, ctx) {
+    const wrap = document.createElement('div');
+    wrap.className = 'context-existing';
+
+    const heading = document.createElement('strong');
+    heading.textContent = `Contexto já preenchido para ${caseBase}`;
+    wrap.appendChild(heading);
+
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = 'Ver contexto';
+    details.appendChild(summary);
+
+    const dl = document.createElement('dl');
+    const rows = [
+      ['examType', ctx.exam_type],
+      ['subtipo', ctx.subtipo],
+      ['sexo / idade', `${ctx.sexo} · ${ctx.idade}a`],
+      ['material', ctx.material],
+      ['hipótese', ctx.hipotese || '(vazio)'],
+    ];
+    for (const [k, v] of rows) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = v;
+      dl.appendChild(dt); dl.appendChild(dd);
+    }
+    details.appendChild(dl);
+    wrap.appendChild(details);
+    return wrap;
+  }
+
+  function buildNewContextForm(caseBase) {
+    const wrap = document.createElement('div');
+    wrap.className = 'context-form';
+
+    const heading = document.createElement('strong');
+    heading.textContent = `Contexto do caso ${caseBase} · novo`;
+    wrap.appendChild(heading);
+
+    const grid = document.createElement('div');
+    grid.className = 'context-grid';
+
+    const examSelect = document.createElement('select');
+    examSelect.id = 'ctxExamType';
+    for (const v of ['AP', 'CITO']) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v;
+      if (v === examTypeFromCaseBase(caseBase)) opt.selected = true;
+      examSelect.appendChild(opt);
+    }
+    grid.appendChild(makeField('examType', examSelect));
+
+    const sexoSelect = document.createElement('select');
+    sexoSelect.id = 'ctxSexo';
+    for (const v of ['F', 'M', 'outro']) {
+      const opt = document.createElement('option');
+      opt.value = v; opt.textContent = v;
+      sexoSelect.appendChild(opt);
+    }
+    grid.appendChild(makeField('sexo', sexoSelect));
+
+    const idadeInput = document.createElement('input');
+    idadeInput.type = 'number'; idadeInput.min = '0'; idadeInput.max = '130';
+    idadeInput.id = 'ctxIdade';
+    grid.appendChild(makeField('idade', idadeInput));
+
+    wrap.appendChild(grid);
+
+    const subtipoInput = document.createElement('input');
+    subtipoInput.type = 'text'; subtipoInput.id = 'ctxSubtipo';
+    subtipoInput.setAttribute('list', 'subtipoSugestoes');
+    subtipoInput.placeholder = 'ex: biopsia_pele';
+    wrap.appendChild(makeField('subtipo', subtipoInput));
+
+    let datalist = document.getElementById('subtipoSugestoes');
+    if (!datalist) {
+      datalist = document.createElement('datalist');
+      datalist.id = 'subtipoSugestoes';
+      for (const s of SUBTIPO_SUGGESTIONS) {
+        const opt = document.createElement('option');
+        opt.value = s;
+        datalist.appendChild(opt);
+      }
+      document.body.appendChild(datalist);
+    }
+
+    const materialTa = document.createElement('textarea');
+    materialTa.id = 'ctxMaterial'; materialTa.rows = 2;
+    materialTa.placeholder = 'ex: Biópsia de pele - região torácica';
+    wrap.appendChild(makeField('material', materialTa));
+
+    const hipoteseTa = document.createElement('textarea');
+    hipoteseTa.id = 'ctxHipotese'; hipoteseTa.rows = 2;
+    hipoteseTa.placeholder = 'Suspeita clínica';
+    wrap.appendChild(makeField('hipótese (opcional)', hipoteseTa));
+
+    return wrap;
+  }
+
+  async function renderContextSection() {
+    if (!reviewContextSection || !reviewFilename) return;
+    const caseBase = caseBaseFromInput(reviewFilename.value);
+    clearChildren(reviewContextSection);
+    if (!caseBase) return;
+
+    try {
+      const r = await fetch(`/v1/case-contexts/${encodeURIComponent(caseBase)}`);
+      if (r.status === 200) {
+        const ctx = await r.json();
+        reviewContextSection.appendChild(buildExistingContextBlock(caseBase, ctx));
+      } else {
+        reviewContextSection.appendChild(buildNewContextForm(caseBase));
+      }
+    } catch (err) {
+      console.warn('Failed to render context section:', err);
+      reviewContextSection.appendChild(buildNewContextForm(caseBase));
+    }
+  }
+
+  function readContextFromForm() {
+    const subtipo = document.getElementById('ctxSubtipo');
+    if (!subtipo) return null; // existing-context view, nothing to send
+    const material = document.getElementById('ctxMaterial').value.trim();
+    const idade = parseInt(document.getElementById('ctxIdade').value, 10);
+    if (!subtipo.value.trim() || !material || !Number.isFinite(idade)) {
+      throw new Error('Preencha examType, subtipo, sexo, idade e material.');
+    }
+    return {
+      exam_type: document.getElementById('ctxExamType').value,
+      subtipo: subtipo.value.trim(),
+      sexo: document.getElementById('ctxSexo').value,
+      idade,
+      material,
+      hipotese: document.getElementById('ctxHipotese').value.trim() || null,
+    };
+  }
+
+  // === Review queue: confirm / rescan wiring (Task 14) =============
+  async function loadNextOrClose() {
+    try {
+      const r = await fetch('/v1/pending-slides');
+      const next = await r.json();
+      if (next.slides.length > 0) await openReview(next.slides[0].id);
+      else closeReviewModal();
+    } catch (err) {
+      console.warn('Failed to load next pending slide:', err);
+      closeReviewModal();
+    }
+  }
+
+  if (reviewConfirm) {
+    reviewConfirm.addEventListener('click', async () => {
+      if (!validateFilename()) return;
+      let clinicalContext = null;
+      try {
+        clinicalContext = readContextFromForm();
+      } catch (err) {
+        alert(err.message);
+        return;
+      }
+      reviewConfirm.disabled = true;
+      try {
+        const res = await fetch(`/v1/pending-slides/${encodeURIComponent(currentSlideId)}/confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: reviewFilename.value.trim().toUpperCase(),
+            clinicalContext: clinicalContext || undefined,
+          }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        await loadNextOrClose();
+      } catch (err) {
+        alert(`Erro ao confirmar: ${err.message}`);
+        reviewConfirm.disabled = false;
+      }
+    });
+  }
+
+  const reviewRescan = document.getElementById('reviewRescan');
+  if (reviewRescan) {
+    reviewRescan.addEventListener('click', async () => {
+      if (!confirm('Marcar esta lâmina como rescanear?')) return;
+      try {
+        await fetch(`/v1/pending-slides/${encodeURIComponent(currentSlideId)}/rescan`, { method: 'POST' });
+        await loadNextOrClose();
+      } catch (err) {
+        alert(`Erro: ${err.message}`);
+      }
+    });
+  }
+
+  if (reviewModal) {
+    reviewModal.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        if (reviewConfirm && !reviewConfirm.disabled) reviewConfirm.click();
+      }
+      if (e.key === 'Escape') closeReviewModal();
+    });
+  }
+
   // =====================
   //  Initialization
   // =====================

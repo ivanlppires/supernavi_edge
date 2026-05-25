@@ -2295,3 +2295,9 @@ button:focus:not(:focus-visible) {
 .review-modal__actions button.primary { background: #4caf50; color: #fff; border: 0; padding: 8px 16px; border-radius: 3px; cursor: pointer; font-weight: 600; }
 .review-modal__actions button.primary:disabled { background: #333; color: #666; cursor: not-allowed; }
 .review-modal__actions button.secondary { background: #2a2a2a; color: #ffd54f; border: 1px solid #555; padding: 8px 16px; border-radius: 3px; cursor: pointer; }
+
+/* === Review queue: context form (Task 14) === */
+.context-existing, .context-form { margin-top: 12px; padding-top: 12px; border-top: 1px solid #333; }
+.context-existing dl { display: grid; grid-template-columns: 100px 1fr; gap: 4px; margin-top: 8px; font-size: 12px; }
+.context-existing dt { opacity: 0.6; }
+.context-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 8px; }
