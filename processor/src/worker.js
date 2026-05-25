@@ -12,6 +12,7 @@ import { generateBigTIFF, cleanupBigTIFF, checkDiskSpace, calculateParallelSlots
 import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 import { pipelineLog } from './lib/pipeline-log.js';
+import { canEmitRegistered } from './lib/review-gate.js';
 
 // Pipeline mode: 'legacy_dzi' (default) or 'bigtiff_iiif'
 const PIPELINE_MODE = process.env.EDGE_PIPELINE_MODE || 'legacy_dzi';
@@ -441,22 +442,26 @@ async function processJob(job) {
           );
           const slide = slideRow.rows[0];
           if (slide) {
-            await getPool().query(
-              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-               VALUES ($1, $2, $3, $4)`,
-              ['slide', job.slideId, 'registered', JSON.stringify({
-                slide_id: job.slideId,
-                case_id: null,
-                svs_filename: slide.original_filename,
-                width: slide.width || 0,
-                height: slide.height || 0,
-                mpp: parseFloat(slide.mpp) || 0,
-                external_case_id: slide.external_case_id || null,
-                external_case_base: slide.external_case_base || null,
-                external_slide_label: slide.external_slide_label || null,
-              })]
-            );
-            console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)} (after TILEGEN)`);
+            if (!(await canEmitRegistered(getPool(), job.slideId))) {
+              console.log(`[Sync] Skipping SlideRegistered for ${job.slideId.substring(0, 12)} (not confirmed)`);
+            } else {
+              await getPool().query(
+                `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+                 VALUES ($1, $2, $3, $4)`,
+                ['slide', job.slideId, 'registered', JSON.stringify({
+                  slide_id: job.slideId,
+                  case_id: null,
+                  svs_filename: slide.original_filename,
+                  width: slide.width || 0,
+                  height: slide.height || 0,
+                  mpp: parseFloat(slide.mpp) || 0,
+                  external_case_id: slide.external_case_id || null,
+                  external_case_base: slide.external_case_base || null,
+                  external_slide_label: slide.external_slide_label || null,
+                })]
+              );
+              console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)} (after TILEGEN)`);
+            }
           }
         } catch (outboxErr) {
           console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
@@ -658,23 +663,27 @@ async function processJob(job) {
           );
           const s = slideData.rows[0];
           if (s) {
-            await getPool().query(
-              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-               VALUES ($1, $2, $3, $4)`,
-              ['slide', job.slideId, 'registered', JSON.stringify({
-                slide_id: job.slideId,
-                case_id: null,
-                svs_filename: s.original_filename,
-                width: s.width || 0,
-                height: s.height || 0,
-                mpp: parseFloat(s.mpp) || 0,
-                external_case_id: s.external_case_id || null,
-                external_case_base: s.external_case_base || null,
-                external_slide_label: s.external_slide_label || null,
-                pipeline_mode: 'bigtiff_iiif',
-              })]
-            );
-            console.log(`[BIGTIFF] SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
+            if (!(await canEmitRegistered(getPool(), job.slideId))) {
+              console.log(`[Sync] Skipping SlideRegistered for ${job.slideId.substring(0, 12)} (not confirmed)`);
+            } else {
+              await getPool().query(
+                `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+                 VALUES ($1, $2, $3, $4)`,
+                ['slide', job.slideId, 'registered', JSON.stringify({
+                  slide_id: job.slideId,
+                  case_id: null,
+                  svs_filename: s.original_filename,
+                  width: s.width || 0,
+                  height: s.height || 0,
+                  mpp: parseFloat(s.mpp) || 0,
+                  external_case_id: s.external_case_id || null,
+                  external_case_base: s.external_case_base || null,
+                  external_slide_label: s.external_slide_label || null,
+                  pipeline_mode: 'bigtiff_iiif',
+                })]
+              );
+              console.log(`[BIGTIFF] SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
+            }
           }
         } catch (outboxErr) {
           console.error(`[BIGTIFF] Failed to emit SlideRegistered (non-fatal): ${outboxErr.message}`);
