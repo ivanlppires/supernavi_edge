@@ -60,3 +60,78 @@ test('GET /:id/image rejects invalid `which`', async () => {
   assert.equal(res.statusCode, 400);
   await fastify.close();
 });
+
+test('POST /:id/confirm — happy path with new case context', async () => {
+  const calls = [];
+  const fastify = Fastify();
+  const route = await import('./pending-slides.js');
+  await fastify.register(route.default, {
+    deps: {
+      getSlide: async (id) => ({ id, format: 'svs', review_status: 'pending' }),
+      deduplicateSlideLabel: async (name) => name,
+      updateSlideOcr: async (...args) => { calls.push(['updateSlideOcr', ...args]); },
+      setSlideReviewStatus: async (...args) => { calls.push(['setSlideReviewStatus', ...args]); return true; },
+      upsertCaseContext: async (ctx) => { calls.push(['upsertCaseContext', ctx]); return ctx; },
+      emitSlideRegistered: async (id) => { calls.push(['emitSlideRegistered', id]); },
+      emitClinicalContextSet: async (caseBase) => { calls.push(['emitClinicalContextSet', caseBase]); },
+    },
+  });
+  const res = await fastify.inject({
+    method: 'POST', url: '/v1/pending-slides/abc/confirm',
+    payload: {
+      filename: 'AP26000388A1',
+      clinicalContext: { exam_type: 'AP', subtipo: 'biopsia_pele', sexo: 'F', idade: 62,
+                         material: 'Biópsia pele', hipotese: null },
+    },
+  });
+  assert.equal(res.statusCode, 200);
+  assert.ok(calls.find(c => c[0] === 'upsertCaseContext'));
+  assert.ok(calls.find(c => c[0] === 'emitClinicalContextSet'));
+  assert.ok(calls.find(c => c[0] === 'emitSlideRegistered'));
+  await fastify.close();
+});
+
+test('POST /:id/confirm — rejects bad filename', async () => {
+  const fastify = Fastify();
+  const route = await import('./pending-slides.js');
+  await fastify.register(route.default, {
+    deps: { getSlide: async () => ({ review_status: 'pending' }) },
+  });
+  const res = await fastify.inject({
+    method: 'POST', url: '/v1/pending-slides/abc/confirm',
+    payload: { filename: 'lixo123' },
+  });
+  assert.equal(res.statusCode, 400);
+  await fastify.close();
+});
+
+test('POST /:id/confirm — 409 when slide is not pending', async () => {
+  const fastify = Fastify();
+  const route = await import('./pending-slides.js');
+  await fastify.register(route.default, {
+    deps: { getSlide: async () => ({ review_status: 'confirmed' }) },
+  });
+  const res = await fastify.inject({
+    method: 'POST', url: '/v1/pending-slides/abc/confirm',
+    payload: { filename: 'AP26000388A1' },
+  });
+  assert.equal(res.statusCode, 409);
+  await fastify.close();
+});
+
+test('POST /:id/rescan — marks slide as rescan without events', async () => {
+  const calls = [];
+  const fastify = Fastify();
+  const route = await import('./pending-slides.js');
+  await fastify.register(route.default, {
+    deps: {
+      getSlide: async () => ({ id: 'abc', review_status: 'pending' }),
+      setSlideReviewStatus: async (id, status) => { calls.push([id, status]); return true; },
+      emitSlideRegistered: async () => { throw new Error('should not be called'); },
+    },
+  });
+  const res = await fastify.inject({ method: 'POST', url: '/v1/pending-slides/abc/rescan' });
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(calls, [['abc', 'rescan']]);
+  await fastify.close();
+});
