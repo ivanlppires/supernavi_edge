@@ -2217,3 +2217,36 @@ button:focus:not(:focus-visible) {
 .pending-badge:hover { background: #ffca28; }
 .pending-badge__icon { font-size: 10px; }
 .pending-badge__label { opacity: 0.7; font-weight: 500; }
+
+/* === Review queue: notification panel === */
+.pending-panel {
+  position: fixed; top: 60px; right: 20px;
+  width: 280px; max-height: 360px;
+  background: #1a1a1a; border: 1px solid #ffd54f; border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  padding: 10px; font-size: 12px;
+  z-index: 1000;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.pending-panel.hidden { display: none; }
+.pending-panel__header {
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 600; color: #ffd54f;
+}
+.pending-panel__header button {
+  background: transparent; border: 0; color: #888; font-size: 18px;
+  cursor: pointer; line-height: 1;
+}
+.pending-panel__list { list-style: none; margin: 0; padding: 0;
+  overflow-y: auto; max-height: 240px; }
+.pending-panel__item {
+  background: #2a2a2a; padding: 6px 8px; border-radius: 3px;
+  margin-bottom: 4px; cursor: pointer;
+}
+.pending-panel__item:hover { background: #3a3a3a; }
+.pending-panel__item .proposed { font-weight: 600; }
+.pending-panel__item .meta { opacity: 0.6; font-size: 10px; }
+.pending-panel__open {
+  background: #ffd54f; color: #000; border: 0; padding: 6px;
+  border-radius: 3px; cursor: pointer; font-weight: 600;
+}

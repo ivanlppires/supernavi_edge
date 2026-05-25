@@ -1748,6 +1748,85 @@
     });
   }
 
+  // === Review queue: notification panel ============================
+  const pendingPanel = document.getElementById('pendingPanel');
+  const pendingPanelList = document.getElementById('pendingPanelList');
+  const pendingPanelCount = document.getElementById('pendingPanelCount');
+  const pendingPanelClose = document.getElementById('pendingPanelClose');
+  const pendingPanelOpenAll = document.getElementById('pendingPanelOpenAll');
+
+  function buildPendingPanelItem(slide) {
+    const li = document.createElement('li');
+    li.className = 'pending-panel__item';
+    li.dataset.slideId = slide.id;
+
+    const proposed = document.createElement('div');
+    proposed.className = 'proposed';
+    proposed.textContent = slide.proposed_name || '(sem sugestão)';
+    li.appendChild(proposed);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = slide.original_filename || '';
+    li.appendChild(meta);
+
+    li.addEventListener('click', () => {
+      pendingPanel.classList.add('hidden');
+      document.dispatchEvent(new CustomEvent('open-review-modal', { detail: { slideId: slide.id } }));
+    });
+    return li;
+  }
+
+  async function renderPendingPanel() {
+    if (!pendingPanel) return;
+    try {
+      const r = await fetch('/v1/pending-slides');
+      if (!r.ok) return;
+      const data = await r.json();
+      pendingPanelCount.textContent = String(data.total);
+      // Safe wipe: emptying via removeChild loop (no innerHTML).
+      while (pendingPanelList.firstChild) pendingPanelList.removeChild(pendingPanelList.firstChild);
+      for (const s of data.slides.slice(0, 5)) {
+        pendingPanelList.appendChild(buildPendingPanelItem(s));
+      }
+    } catch (err) {
+      console.warn('Failed to render pending panel:', err);
+    }
+  }
+
+  if (pendingPanel) {
+    document.addEventListener('open-pending-panel', () => {
+      pendingPanel.classList.remove('hidden');
+      renderPendingPanel();
+    });
+
+    if (pendingPanelClose) {
+      pendingPanelClose.addEventListener('click', () => pendingPanel.classList.add('hidden'));
+    }
+
+    if (pendingPanelOpenAll) {
+      pendingPanelOpenAll.addEventListener('click', () => {
+        pendingPanel.classList.add('hidden');
+        document.dispatchEvent(new CustomEvent('open-review-modal', { detail: { slideId: null } }));
+      });
+    }
+
+    // Close on outside click (but not when clicking the badge that opened it).
+    document.addEventListener('click', (e) => {
+      if (pendingPanel.classList.contains('hidden')) return;
+      if (pendingPanel.contains(e.target)) return;
+      if (e.target.closest && e.target.closest('#pendingBadge')) return;
+      pendingPanel.classList.add('hidden');
+    });
+
+    // Close on Escape
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !pendingPanel.classList.contains('hidden')) {
+        pendingPanel.classList.add('hidden');
+      }
+    });
+  }
+
   // =====================
   //  Initialization
   // =====================

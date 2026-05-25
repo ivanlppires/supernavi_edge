@@ -392,6 +392,16 @@
     </div>
   </div>
 
+  <!-- Review queue: notification panel (position: fixed, layout-independent) -->
+  <div id="pendingPanel" class="pending-panel hidden" role="dialog" aria-label="Lâminas aguardando">
+    <div class="pending-panel__header">
+      <span>Aguardando &middot; <span id="pendingPanelCount">0</span></span>
+      <button type="button" id="pendingPanelClose" aria-label="Fechar">&times;</button>
+    </div>
+    <ul id="pendingPanelList" class="pending-panel__list"></ul>
+    <button type="button" id="pendingPanelOpenAll" class="pending-panel__open">Abrir fila completa</button>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>
