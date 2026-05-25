@@ -1,7 +1,7 @@
 /**
- * Label OCR via Claude Vision API.
+ * Label OCR via Gemini Vision API.
  *
- * Sends slide images to Claude and extracts the case identifier.
+ * Sends slide images to Gemini and extracts the case identifier.
  * Primary source: slide2.jpg (full slide overview, code visible at top).
  * Fallback: label.jpg + slide2.jpg cross-reference.
  *
@@ -21,7 +21,8 @@
 import { readFile, access } from 'fs/promises';
 import { join } from 'path';
 import { constants } from 'fs';
-import Anthropic from '@anthropic-ai/sdk';
+
+const OCR_MODEL = process.env.OCR_MODEL || 'gemini-2.5-flash';
 
 const OCR_RESPONSE_REGEX = /^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i;
 
@@ -56,9 +57,12 @@ function correctYear(yearStr) {
 
 let client = null;
 
-function getClient() {
+async function getClient() {
   if (!client) {
-    client = new Anthropic();  // Uses ANTHROPIC_API_KEY env var
+    const apiKey = process.env.GOOGLE_GENAI_API_KEY;
+    if (!apiKey) throw new Error('GOOGLE_GENAI_API_KEY not set');
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    client = new GoogleGenerativeAI(apiKey);
   }
   return client;
 }
@@ -180,24 +184,23 @@ async function readImage(imagePath) {
 }
 
 /**
- * Call Claude Vision with one or more images and a prompt.
+ * Call Gemini Vision with one or more images and a prompt.
  */
 async function callVision(images, prompt) {
-  const content = [
+  const parts = [
     ...images.map(img => ({
-      type: 'image',
-      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+      inlineData: { mimeType: img.mediaType, data: img.base64 },
     })),
-    { type: 'text', text: prompt },
+    { text: prompt },
   ];
 
-  const response = await getClient().messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 100,
-    messages: [{ role: 'user', content }],
+  const genai = await getClient();
+  const model = genai.getGenerativeModel({
+    model: OCR_MODEL,
+    generationConfig: { maxOutputTokens: 100, temperature: 0 },
   });
-
-  return response.content?.[0]?.text || '';
+  const result = await model.generateContent({ contents: [{ role: 'user', parts }] });
+  return result.response.text() || '';
 }
 
 /**
@@ -275,6 +278,5 @@ export function isOcrEnabled() {
   const envFlag = process.env.LABEL_OCR_ENABLED;
   if (envFlag === 'false') return false;
   if (envFlag === 'true') return true;
-  // Default: enabled if API key is present
-  return !!process.env.ANTHROPIC_API_KEY;
+  return !!process.env.GOOGLE_GENAI_API_KEY;
 }
