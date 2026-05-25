@@ -1827,6 +1827,133 @@
     });
   }
 
+  // === Review queue: modal (Tasks 13+14) =========================
+  const reviewModal = document.getElementById('reviewModal');
+  const reviewModalClose = document.getElementById('reviewModalClose');
+  const reviewImage = document.getElementById('reviewImage');
+  const reviewImageEmpty = document.getElementById('reviewImageEmpty');
+  const reviewImageToggle = document.querySelectorAll('.review-modal__image-toggle button');
+  const reviewFilename = document.getElementById('reviewFilename');
+  const reviewFilenameHint = document.getElementById('reviewFilenameHint');
+  const reviewFilenameError = document.getElementById('reviewFilenameError');
+  const reviewConfirm = document.getElementById('reviewConfirm');
+  const reviewContextSection = document.getElementById('reviewContextSection');
+
+  let currentSlideId = null;
+  let currentImageWhich = 'label';
+
+  const FILENAME_RE = /^(AP|PA|IM|C)\d{6,12}[A-Z]?\d*$/;
+
+  function loadImage(slideId, which) {
+    if (!reviewImage || !reviewImageEmpty) return;
+    reviewImageEmpty.classList.add('hidden');
+    reviewImage.classList.remove('hidden');
+    reviewImage.src = '/v1/pending-slides/' + encodeURIComponent(slideId) + '/image?which=' + encodeURIComponent(which);
+    reviewImage.onerror = () => {
+      reviewImage.classList.add('hidden');
+      reviewImageEmpty.classList.remove('hidden');
+      // `which` is hardcoded to 'label' or 'slide2' — safe in a template string.
+      reviewImageEmpty.textContent = which + '.jpg indisponível';
+    };
+  }
+
+  if (reviewImageToggle && reviewImageToggle.length) {
+    reviewImageToggle.forEach(btn => {
+      btn.addEventListener('click', () => {
+        reviewImageToggle.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentImageWhich = btn.dataset.which;
+        loadImage(currentSlideId, currentImageWhich);
+      });
+    });
+  }
+
+  function closeReviewModal() {
+    if (!reviewModal) return;
+    reviewModal.classList.add('hidden');
+    currentSlideId = null;
+  }
+
+  if (reviewModalClose) {
+    reviewModalClose.addEventListener('click', closeReviewModal);
+  }
+
+  // renderContextSection is defined in Task 14; guard the call.
+  async function safeRenderContextSection() {
+    if (typeof renderContextSection === 'function') {
+      try { await renderContextSection(); } catch (err) { console.warn(err); }
+    } else {
+      // Clear the section so an old context from a prior open doesn't linger.
+      if (reviewContextSection) {
+        while (reviewContextSection.firstChild) reviewContextSection.removeChild(reviewContextSection.firstChild);
+      }
+    }
+  }
+
+  async function openReview(slideId) {
+    if (!reviewModal) return;
+    currentSlideId = slideId;
+    currentImageWhich = 'label';
+    if (reviewImageToggle && reviewImageToggle.length) {
+      reviewImageToggle.forEach(b => b.classList.toggle('active', b.dataset.which === 'label'));
+    }
+
+    try {
+      const r = await fetch('/v1/pending-slides');
+      const data = await r.json();
+      const slide = data.slides.find(s => s.id === slideId) || data.slides[0];
+      if (!slide) { closeReviewModal(); return; }
+      currentSlideId = slide.id;
+
+      reviewFilename.value = slide.proposed_name || '';
+      reviewFilenameHint.textContent = slide.proposed_name ? 'Sugestão IA' : 'Sem sugestão';
+      validateFilename();
+      await safeRenderContextSection();
+
+      loadImage(currentSlideId, currentImageWhich);
+      reviewModal.classList.remove('hidden');
+      reviewFilename.focus();
+    } catch (err) {
+      console.warn('Failed to open review modal:', err);
+    }
+  }
+
+  function validateFilename() {
+    if (!reviewFilename || !reviewConfirm) return false;
+    const ok = FILENAME_RE.test(reviewFilename.value.trim());
+    reviewConfirm.disabled = !ok;
+    if (reviewFilenameError) {
+      reviewFilenameError.classList.toggle('hidden', ok);
+      if (!ok) reviewFilenameError.textContent = 'Formato esperado: AP/PA/IM/C + 6-12 dígitos + opcional letra/dígitos';
+    }
+    return ok;
+  }
+
+  if (reviewFilename) {
+    reviewFilename.addEventListener('input', async () => {
+      validateFilename();
+      await safeRenderContextSection();
+    });
+  }
+
+  if (reviewModal) {
+    document.addEventListener('open-review-modal', async (e) => {
+      let slideId = e.detail && e.detail.slideId;
+      if (!slideId) {
+        try {
+          const r = await fetch('/v1/pending-slides');
+          const data = await r.json();
+          if (data.slides.length === 0) return;
+          slideId = data.slides[0].id;
+        } catch (err) {
+          console.warn('Failed to fetch pending slides:', err);
+          return;
+        }
+      }
+      await openReview(slideId);
+    });
+  }
+
   // =====================
   //  Initialization
   // =====================

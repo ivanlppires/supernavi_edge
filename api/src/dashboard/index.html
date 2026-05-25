@@ -402,6 +402,41 @@
     <button type="button" id="pendingPanelOpenAll" class="pending-panel__open">Abrir fila completa</button>
   </div>
 
+  <!-- Review queue: review modal (Task 13+14) -->
+  <div id="reviewModal" class="review-modal hidden" role="dialog" aria-modal="true">
+    <div class="review-modal__backdrop"></div>
+    <div class="review-modal__panel">
+      <header class="review-modal__header">
+        <span id="reviewModalTitle">Revisar lâmina</span>
+        <button type="button" id="reviewModalClose" aria-label="Fechar">×</button>
+      </header>
+      <div class="review-modal__body">
+        <div class="review-modal__image">
+          <div class="review-modal__image-toggle">
+            <button type="button" data-which="label" class="active">label.jpg</button>
+            <button type="button" data-which="slide2">slide2.jpg</button>
+          </div>
+          <img id="reviewImage" alt="Lâmina">
+          <div id="reviewImageEmpty" class="review-modal__image-empty hidden">Imagem indisponível</div>
+        </div>
+        <div class="review-modal__form">
+          <label class="review-field">
+            <span>Nome da lâmina</span>
+            <input type="text" id="reviewFilename" autocomplete="off" spellcheck="false">
+            <small id="reviewFilenameHint">Sugestão IA</small>
+            <small id="reviewFilenameError" class="error hidden"></small>
+          </label>
+          <div id="reviewContextSection"></div>
+          <footer class="review-modal__actions">
+            <button type="button" id="reviewRescan" class="secondary">Marcar para rescanear</button>
+            <div class="spacer"></div>
+            <button type="button" id="reviewConfirm" class="primary" disabled>Confirmar e próxima</button>
+          </footer>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="/app.js"></script>
 </body>
 </html>
