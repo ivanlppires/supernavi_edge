@@ -1740,6 +1740,12 @@
     pendingBadge.addEventListener('click', () => {
       document.dispatchEvent(new CustomEvent('open-pending-panel'));
     });
+    pendingBadge.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        document.dispatchEvent(new CustomEvent('open-pending-panel'));
+      }
+    });
   }
 
   // =====================
