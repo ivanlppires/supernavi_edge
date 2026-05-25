@@ -15,6 +15,7 @@ test('GET /v1/pending-slides returns the queue with proposed names', async () =>
   const fastify = Fastify();
   const route = await import('./pending-slides.js');
   await fastify.register(route.default, {
+    skipFlagCheck: true,
     deps: {
       listPendingReviewSlides: async () => mockRows,
       countPendingReviewSlides: async () => 1,
@@ -40,6 +41,7 @@ test('GET /:id/image returns the JPEG bytes', async () => {
   const fastify = Fastify();
   const route = await import('./pending-slides.js');
   await fastify.register(route.default, {
+    skipFlagCheck: true,
     deps: { getSlide: async () => ({ id: 'abc', dsmeta_path: dsmeta, review_status: 'pending' }) },
   });
   const res = await fastify.inject({ method: 'GET', url: '/v1/pending-slides/abc/image?which=label' });
@@ -54,6 +56,7 @@ test('GET /:id/image rejects invalid `which`', async () => {
   const fastify = Fastify();
   const route = await import('./pending-slides.js');
   await fastify.register(route.default, {
+    skipFlagCheck: true,
     deps: { getSlide: async () => ({ id: 'abc', dsmeta_path: '/tmp', review_status: 'pending' }) },
   });
   const res = await fastify.inject({ method: 'GET', url: '/v1/pending-slides/abc/image?which=../etc/passwd' });
@@ -66,6 +69,7 @@ test('POST /:id/confirm — happy path with new case context', async () => {
   const fastify = Fastify();
   const route = await import('./pending-slides.js');
   await fastify.register(route.default, {
+    skipFlagCheck: true,
     deps: {
       getSlide: async (id) => ({ id, format: 'svs', review_status: 'pending' }),
       deduplicateSlideLabel: async (name) => name,
@@ -95,6 +99,7 @@ test('POST /:id/confirm — rejects bad filename', async () => {
   const fastify = Fastify();
   const route = await import('./pending-slides.js');
   await fastify.register(route.default, {
+    skipFlagCheck: true,
     deps: { getSlide: async () => ({ review_status: 'pending' }) },
   });
   const res = await fastify.inject({
@@ -109,6 +114,7 @@ test('POST /:id/confirm — 409 when slide is not pending', async () => {
   const fastify = Fastify();
   const route = await import('./pending-slides.js');
   await fastify.register(route.default, {
+    skipFlagCheck: true,
     deps: { getSlide: async () => ({ review_status: 'confirmed' }) },
   });
   const res = await fastify.inject({
@@ -124,6 +130,7 @@ test('POST /:id/rescan — marks slide as rescan without events', async () => {
   const fastify = Fastify();
   const route = await import('./pending-slides.js');
   await fastify.register(route.default, {
+    skipFlagCheck: true,
     deps: {
       getSlide: async () => ({ id: 'abc', review_status: 'pending' }),
       setSlideReviewStatus: async (id, status) => { calls.push([id, status]); return true; },

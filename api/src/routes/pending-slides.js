@@ -6,6 +6,7 @@ import { query } from '../db/index.js';
 import { confirmBodySchema } from '../lib/clinical-context-schema.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { eventBus } from '../services/events.js';
+import { isReviewQueueEnabled } from '../lib/feature-flags.js';
 
 async function defaultEmitSlideRegistered(slideId) {
   const r = await query(
@@ -47,6 +48,12 @@ async function defaultEmitClinicalContextSet(caseBase) {
 }
 
 export default async function pendingSlidesRoutes(fastify, opts = {}) {
+  fastify.addHook('preHandler', async (req, reply) => {
+    if (!opts.skipFlagCheck && !isReviewQueueEnabled()) {
+      return reply.code(404).send({ error: 'review queue disabled' });
+    }
+  });
+
   const deps = {
     listPendingReviewSlides: slidesDb.listPendingReviewSlides,
     countPendingReviewSlides: slidesDb.countPendingReviewSlides,

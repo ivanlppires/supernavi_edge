@@ -1721,6 +1721,27 @@
     });
   }
 
+  // === Review queue feature flag ============================
+  // When disabled, strip the badge/panel/modal from the DOM so the wiring
+  // added by Tasks 11-14 finds null elements and short-circuits via its
+  // existing `if (element)` guards.
+  (async () => {
+    try {
+      const r = await fetch('/v1/capabilities');
+      if (r.ok) {
+        const caps = await r.json();
+        if (!caps?.features?.review_queue) {
+          ['pendingBadge', 'pendingPanel', 'reviewModal'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to check review_queue capability:', err);
+    }
+  })();
+
   // =====================
   //  Review queue: pending badge
   // =====================

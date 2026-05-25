@@ -26,6 +26,7 @@ import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { scannerFileExists, insertScannerFile, getAllScannerFilePaths } from '../db/scanner.js';
 import { enqueueJob } from '../lib/queue.js';
 import { eventBus } from './events.js';
+import { isReviewQueueEnabled } from '../lib/feature-flags.js';
 
 const WSI_EXTENSIONS = new Set(['.svs', '.ndpi', '.tif', '.tiff', '.mrxs']);
 
@@ -151,16 +152,18 @@ async function processNewFile(filePath) {
     format,
   });
 
-  // Every new slide starts as pending review (technician confirms name +
-  // context). Legacy ocrStatus stays for backward compat in the schema.
-  await setSlideReviewStatus(slideId, 'pending');
+  if (isReviewQueueEnabled()) {
+    // Every new slide starts as pending review (technician confirms name +
+    // context). Legacy ocrStatus stays for backward compat in the schema.
+    await setSlideReviewStatus(slideId, 'pending');
 
-  try {
-    const { countPendingReviewSlides } = await import('../db/slides.js');
-    const n = await countPendingReviewSlides();
-    eventBus.emitPendingCountChanged(n);
-  } catch (err) {
-    console.warn(`[Scanner] Failed to broadcast pending count: ${err.message}`);
+    try {
+      const { countPendingReviewSlides } = await import('../db/slides.js');
+      const n = await countPendingReviewSlides();
+      eventBus.emitPendingCountChanged(n);
+    } catch (err) {
+      console.warn(`[Scanner] Failed to broadcast pending count: ${err.message}`);
+    }
   }
 
   const slideUpdates = { ...(externalFields || {}), ocrStatus, dsmetaPath };
