@@ -196,3 +196,46 @@ export async function listPendingOcrSlides() {
   );
   return result.rows;
 }
+
+/**
+ * List slides waiting for technician review.
+ * Returns the data the dashboard fila needs: identifier proposals + age.
+ */
+export async function listPendingReviewSlides() {
+  const result = await query(
+    `SELECT id,
+            original_filename,
+            external_case_base,
+            external_slide_label,
+            dsmeta_path,
+            format,
+            created_at
+       FROM slides
+      WHERE review_status = 'pending'
+      ORDER BY created_at ASC`
+  );
+  return result.rows;
+}
+
+/**
+ * Count slides waiting for review (used for the dashboard badge).
+ */
+export async function countPendingReviewSlides() {
+  const result = await query(
+    `SELECT COUNT(*)::int AS n FROM slides WHERE review_status = 'pending'`
+  );
+  return result.rows[0].n;
+}
+
+/**
+ * Atomically set review_status. Returns true if a row was updated.
+ */
+export async function setSlideReviewStatus(id, status) {
+  const allowed = new Set(['pending', 'confirmed', 'rescan']);
+  if (!allowed.has(status)) throw new Error(`invalid review_status: ${status}`);
+  const result = await query(
+    `UPDATE slides SET review_status = $1 WHERE id = $2`,
+    [status, id]
+  );
+  return result.rowCount > 0;
+}

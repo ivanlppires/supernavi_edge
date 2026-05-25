@@ -8,6 +8,7 @@ import { enqueueJob } from '../lib/queue.js';
 import { query } from '../db/index.js';
 import { ocrLabel, isOcrEnabled, parseOcrResponse } from '../lib/label-ocr.js';
 import { stat } from 'fs/promises';
+import { canEmitRegistered } from '../lib/review-gate.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
@@ -471,21 +472,25 @@ export default async function slidesRoutes(fastify) {
     );
     const s = slideRow.rows[0];
     if (s && s.tilegen_status === 'done') {
-      await query(
-        `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-         VALUES ($1, $2, $3, $4)`,
-        ['slide', slideId, 'registered', JSON.stringify({
-          slide_id: slideId,
-          case_id: null,
-          svs_filename: newFilename,
-          width: s.width || 0,
-          height: s.height || 0,
-          mpp: parseFloat(s.mpp) || 0,
-          external_case_id: s.external_case_id,
-          external_case_base: s.external_case_base,
-          external_slide_label: s.external_slide_label,
-        })]
-      );
+      if (!(await canEmitRegistered(slideId))) {
+        console.log(`[OCR] Skipping SlideRegistered for ${slideId.substring(0, 12)} (not confirmed)`);
+      } else {
+        await query(
+          `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+           VALUES ($1, $2, $3, $4)`,
+          ['slide', slideId, 'registered', JSON.stringify({
+            slide_id: slideId,
+            case_id: null,
+            svs_filename: newFilename,
+            width: s.width || 0,
+            height: s.height || 0,
+            mpp: parseFloat(s.mpp) || 0,
+            external_case_id: s.external_case_id,
+            external_case_base: s.external_case_base,
+            external_slide_label: s.external_slide_label,
+          })]
+        );
+      }
     }
 
     return {
@@ -539,21 +544,25 @@ export default async function slidesRoutes(fastify) {
     );
     const s = slideRow.rows[0];
     if (s && s.tilegen_status === 'done') {
-      await query(
-        `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-         VALUES ($1, $2, $3, $4)`,
-        ['slide', slideId, 'registered', JSON.stringify({
-          slide_id: slideId,
-          case_id: null,
-          svs_filename: newFilename,
-          width: s.width || 0,
-          height: s.height || 0,
-          mpp: parseFloat(s.mpp) || 0,
-          external_case_id: s.external_case_id,
-          external_case_base: s.external_case_base,
-          external_slide_label: s.external_slide_label,
-        })]
-      );
+      if (!(await canEmitRegistered(slideId))) {
+        console.log(`[Rename] Skipping SlideRegistered for ${slideId.substring(0, 12)} (not confirmed)`);
+      } else {
+        await query(
+          `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+           VALUES ($1, $2, $3, $4)`,
+          ['slide', slideId, 'registered', JSON.stringify({
+            slide_id: slideId,
+            case_id: null,
+            svs_filename: newFilename,
+            width: s.width || 0,
+            height: s.height || 0,
+            mpp: parseFloat(s.mpp) || 0,
+            external_case_id: s.external_case_id,
+            external_case_base: s.external_case_base,
+            external_slide_label: s.external_slide_label,
+          })]
+        );
+      }
     }
 
     return {

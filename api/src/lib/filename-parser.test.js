@@ -73,6 +73,26 @@ describe('parsePathologyFilename', () => {
     });
   });
 
+  it('parses C-prefix cytology filename', () => {
+    const result = parsePathologyFilename('C26000588A.svs');
+    assert.deepStrictEqual(result, {
+      caseBase: 'C26000588',
+      label: 'A',
+      externalCaseId: 'pathoweb:C26000588',
+      externalCaseBase: 'C26000588',
+    });
+  });
+
+  it('parses C-prefix without suffix (defaults to label "1")', () => {
+    const result = parsePathologyFilename('C26000588.svs');
+    assert.deepStrictEqual(result, {
+      caseBase: 'C26000588',
+      label: '1',
+      externalCaseId: 'pathoweb:C26000588',
+      externalCaseBase: 'C26000588',
+    });
+  });
+
   it('returns null for unrecognized filenames', () => {
     assert.strictEqual(parsePathologyFilename('random_file.svs'), null);
     assert.strictEqual(parsePathologyFilename('09443_20260219090407.svs'), null);

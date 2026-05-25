@@ -1,9 +1,10 @@
 /**
- * Label OCR via Claude Vision API.
+ * Label OCR via Gemini Vision API.
  *
- * Sends slide images to Claude and extracts the case identifier.
- * Primary source: slide2.jpg (full slide overview, code visible at top).
- * Fallback: label.jpg + slide2.jpg cross-reference.
+ * Single-attempt: sends slide2.jpg (full slide overview, code visible at top)
+ * to Gemini and extracts the case identifier. Returns null on UNREADABLE,
+ * missing slide2.jpg, or parse failure — the technician confirms or overrides
+ * the result via the review queue.
  *
  * Labels contain:
  *   - Printed text: case number (e.g., AP26000388 or IM26000100)
@@ -15,13 +16,14 @@
  *   C  = Citologia
  *   IM = Imuno-histoquímico
  *
- * Pattern: [AP|PA|C|IM][6-8 digits][letter][optional digit(s)]
+ * Pattern: [AP|PA|C|IM][6-12 digits][letter][optional digit(s)]
  */
 
 import { readFile, access } from 'fs/promises';
 import { join } from 'path';
 import { constants } from 'fs';
-import Anthropic from '@anthropic-ai/sdk';
+
+const OCR_MODEL = process.env.OCR_MODEL || 'gemini-2.5-flash';
 
 const OCR_RESPONSE_REGEX = /^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i;
 
@@ -56,9 +58,12 @@ function correctYear(yearStr) {
 
 let client = null;
 
-function getClient() {
+async function getClient() {
   if (!client) {
-    client = new Anthropic();  // Uses ANTHROPIC_API_KEY env var
+    const apiKey = process.env.GOOGLE_GENAI_API_KEY;
+    if (!apiKey) throw new Error('GOOGLE_GENAI_API_KEY not set');
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    client = new GoogleGenerativeAI(apiKey);
   }
   return client;
 }
@@ -107,24 +112,6 @@ export function parseOcrResponse(text) {
   return { fullName, caseBase, slideLabel };
 }
 
-const LABEL_PROMPT = `This is a photo of a pathology slide label. Extract the case identifier.
-
-The label may contain:
-- A PRINTED case number starting with AP or PA (Anatomopatológico), C (Citologia), or IM (Imuno-histoquímico), followed by 6-8 digits.
-- A HANDWRITTEN suffix indicating flask (A, B, C...) and optionally slide number (1, 2, 3...).
-- Sometimes the label is ABBREVIATED with handwriting: "26-388A" or "26_388A" means AP26000388A (zeros suppressed, separator is hyphen or underscore).
-
-IMPORTANT: The first two digits are the YEAR. Current year is ${new Date().getFullYear()} (abbreviated: ${String(new Date().getFullYear()).slice(-2)}). Handwritten "2" often looks like "9" — if you see what looks like "96", it is almost certainly "26".
-
-Examples of identifiers you may see:
-  Full: AP26000388A1, AP26000388B, PA26000019, C26000588A, IM26000100A2
-  Abbreviated: 26-388A, 26_388B2, 26-621, 26_100A
-
-Ignore any other text on the label such as patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.
-
-Reply with ONLY the identifier as you read it (e.g., "AP26000388A1" or "26-388A"). No other text.
-If you cannot read the label, reply with UNREADABLE.`;
-
 const SLIDE_OVERVIEW_PROMPT = `This is a photo of an entire pathology slide. The case identifier is usually HANDWRITTEN on the TOP PORTION of the slide (the label area).
 
 Look at the upper part of the image to find the identifier.
@@ -145,28 +132,6 @@ Ignore patient names, doctor names, "urgente", or other annotations. Only extrac
 Reply with ONLY the identifier (e.g., "AP26000388A1" or "26-388A"). No other text.
 If you cannot read the identifier, reply with UNREADABLE.`;
 
-const LABEL_WITH_SLIDE_PROMPT = `The label on this pathology slide was difficult to read. Here are TWO images:
-1. The label photo (may be blurry, damaged, or partially obscured)
-2. A thumbnail of the entire slide (may show printed text, barcodes, or markings on the glass)
-
-Extract the case identifier from EITHER image — whichever is more legible.
-
-The identifier format:
-- Starts with AP or PA (Anatomopatológico), C (Citologia), or IM (Imuno-histoquímico), followed by 6-8 digits.
-- May have a handwritten suffix: flask letter (A, B, C...) and optional slide number (1, 2, 3...).
-- May be ABBREVIATED: "26-388A" or "26_388A" means AP26000388A (zeros suppressed, separator is hyphen or underscore).
-
-IMPORTANT: The first two digits are the YEAR. Current year is ${new Date().getFullYear()} (abbreviated: ${String(new Date().getFullYear()).slice(-2)}). Handwritten "2" often looks like "9" — if you see what looks like "96", it is almost certainly "26".
-
-Examples:
-  Full: AP26000388A1, AP26000388B, PA26000019, C26000588A, IM26000100A2
-  Abbreviated: 26-388A, 26_388B2, 26-621, 26_100A
-
-Ignore patient names, doctor names, "urgente", or other annotations. Only extract the case identifier.
-
-Reply with ONLY the identifier (e.g., "AP26000388A1" or "26-388A"). No other text.
-If you cannot read the identifier from either image, reply with UNREADABLE.`;
-
 /**
  * Read an image file and return base64 + media type.
  */
@@ -180,92 +145,49 @@ async function readImage(imagePath) {
 }
 
 /**
- * Call Claude Vision with one or more images and a prompt.
+ * Call Gemini Vision with one or more images and a prompt.
  */
 async function callVision(images, prompt) {
-  const content = [
+  const parts = [
     ...images.map(img => ({
-      type: 'image',
-      source: { type: 'base64', media_type: img.mediaType, data: img.base64 },
+      inlineData: { mimeType: img.mediaType, data: img.base64 },
     })),
-    { type: 'text', text: prompt },
+    { text: prompt },
   ];
 
-  const response = await getClient().messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 100,
-    messages: [{ role: 'user', content }],
+  const genai = await getClient();
+  const model = genai.getGenerativeModel({
+    model: OCR_MODEL,
+    generationConfig: { maxOutputTokens: 100, temperature: 0 },
   });
-
-  return response.content?.[0]?.text || '';
+  const result = await model.generateContent({ contents: [{ role: 'user', parts }] });
+  return result.response.text() || '';
 }
 
 /**
  * OCR a slide's label from its .dsmeta directory.
- * Strategy:
- *   1. Try slide2.jpg (full slide overview — code visible at top, not cropped)
- *   2. Fallback: label.jpg + slide2.jpg together (cross-reference)
- *   3. Return null if both fail
+ * Single-attempt: tries slide2.jpg (full slide with the code on top).
+ * Returns null on UNREADABLE / missing slide2 / parse failure.
+ * The technician confirms or overrides the result via the review queue.
  *
  * @param {string} dsmetaDir - Path to the .dsmeta directory
  * @returns {Promise<{ fullName: string, caseBase: string, slideLabel: string } | null>}
  */
 export async function ocrLabel(dsmetaDir) {
   const slide2Path = join(dsmetaDir, 'slide2.jpg');
-  const labelPath = join(dsmetaDir, 'label.jpg');
-
-  // Stage 1: Try slide2.jpg (full slide, code not cropped)
   try {
     await access(slide2Path, constants.R_OK);
-    const slide2Image = await readImage(slide2Path);
-    const rawText = await callVision([slide2Image], SLIDE_OVERVIEW_PROMPT);
-    console.log(`[OCR] slide2.jpg response for ${dsmetaDir}: "${rawText}"`);
-
-    if (rawText.trim().toUpperCase() !== 'UNREADABLE') {
-      const result = parseOcrResponse(rawText);
-      if (result) return result;
-    }
   } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
-    console.log(`[OCR] No slide2.jpg at ${slide2Path}`);
+    if (err.code === 'ENOENT') return null;
+    throw err;
   }
 
-  // Stage 2: Fallback — label.jpg + slide2.jpg together
-  let hasLabel = false;
-  let hasSlide2 = false;
+  const slide2Image = await readImage(slide2Path);
+  const rawText = await callVision([slide2Image], SLIDE_OVERVIEW_PROMPT);
+  console.log(`[OCR] slide2.jpg response for ${dsmetaDir}: "${rawText}"`);
 
-  try {
-    await access(labelPath, constants.R_OK);
-    hasLabel = true;
-  } catch {}
-  try {
-    await access(slide2Path, constants.R_OK);
-    hasSlide2 = true;
-  } catch {}
-
-  if (hasLabel && hasSlide2) {
-    console.log(`[OCR] Retrying with label.jpg + slide2.jpg from ${dsmetaDir}`);
-    const labelImage = await readImage(labelPath);
-    const slide2Image = await readImage(slide2Path);
-    const retryText = await callVision([labelImage, slide2Image], LABEL_WITH_SLIDE_PROMPT);
-    console.log(`[OCR] Retry response (label+slide2): "${retryText}"`);
-
-    if (retryText.trim().toUpperCase() !== 'UNREADABLE') {
-      return parseOcrResponse(retryText);
-    }
-  } else if (hasLabel) {
-    // No slide2.jpg available, try label alone as last resort
-    console.log(`[OCR] Only label.jpg available, trying label alone from ${dsmetaDir}`);
-    const labelImage = await readImage(labelPath);
-    const rawText = await callVision([labelImage], LABEL_PROMPT);
-    console.log(`[OCR] Label-only response: "${rawText}"`);
-
-    if (rawText.trim().toUpperCase() !== 'UNREADABLE') {
-      return parseOcrResponse(rawText);
-    }
-  }
-
-  return null;
+  if (rawText.trim().toUpperCase() === 'UNREADABLE') return null;
+  return parseOcrResponse(rawText);
 }
 
 /**
@@ -275,6 +197,5 @@ export function isOcrEnabled() {
   const envFlag = process.env.LABEL_OCR_ENABLED;
   if (envFlag === 'false') return false;
   if (envFlag === 'true') return true;
-  // Default: enabled if API key is present
-  return !!process.env.ANTHROPIC_API_KEY;
+  return !!process.env.GOOGLE_GENAI_API_KEY;
 }

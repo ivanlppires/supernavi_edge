@@ -17,6 +17,11 @@
         <circle cx="12" cy="12" r="3"/>
       </svg>
       <h1 class="header-title">SuperNavi Edge</h1>
+      <div id="pendingBadge" class="pending-badge hidden" role="button" tabindex="0" title="Aguardando confirmação">
+        <span class="pending-badge__icon">&#9679;</span>
+        <span class="pending-badge__count" id="pendingCount">0</span>
+        <span class="pending-badge__label">aguardando</span>
+      </div>
     </div>
     <div class="header-status" id="connectionStatus">
       <span class="status-dot disconnected" id="connectionDot"></span>
@@ -382,6 +387,51 @@
             <button class="btn-reocr" id="btnReocr">Re-ler OCR</button>
             <button class="btn-close-modal" id="btnCloseOcr">Fechar</button>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Review queue: notification panel (position: fixed, layout-independent) -->
+  <div id="pendingPanel" class="pending-panel hidden" role="dialog" aria-label="Lâminas aguardando">
+    <div class="pending-panel__header">
+      <span>Aguardando &middot; <span id="pendingPanelCount">0</span></span>
+      <button type="button" id="pendingPanelClose" aria-label="Fechar">&times;</button>
+    </div>
+    <ul id="pendingPanelList" class="pending-panel__list"></ul>
+    <button type="button" id="pendingPanelOpenAll" class="pending-panel__open">Abrir fila completa</button>
+  </div>
+
+  <!-- Review queue: review modal (Task 13+14) -->
+  <div id="reviewModal" class="review-modal hidden" role="dialog" aria-modal="true">
+    <div class="review-modal__backdrop"></div>
+    <div class="review-modal__panel">
+      <header class="review-modal__header">
+        <span id="reviewModalTitle">Revisar lâmina</span>
+        <button type="button" id="reviewModalClose" aria-label="Fechar">×</button>
+      </header>
+      <div class="review-modal__body">
+        <div class="review-modal__image">
+          <div class="review-modal__image-toggle">
+            <button type="button" data-which="label" class="active">label.jpg</button>
+            <button type="button" data-which="slide2">slide2.jpg</button>
+          </div>
+          <img id="reviewImage" alt="Lâmina">
+          <div id="reviewImageEmpty" class="review-modal__image-empty hidden">Imagem indisponível</div>
+        </div>
+        <div class="review-modal__form">
+          <label class="review-field">
+            <span>Nome da lâmina</span>
+            <input type="text" id="reviewFilename" autocomplete="off" spellcheck="false">
+            <small id="reviewFilenameHint">Sugestão IA</small>
+            <small id="reviewFilenameError" class="error hidden"></small>
+          </label>
+          <div id="reviewContextSection"></div>
+          <footer class="review-modal__actions">
+            <button type="button" id="reviewRescan" class="secondary">Marcar para rescanear</button>
+            <div class="spacer"></div>
+            <button type="button" id="reviewConfirm" class="primary" disabled>Confirmar e próxima</button>
+          </footer>
         </div>
       </div>
     </div>
