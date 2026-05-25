@@ -1,9 +1,10 @@
 /**
  * Label OCR via Gemini Vision API.
  *
- * Sends slide images to Gemini and extracts the case identifier.
- * Primary source: slide2.jpg (full slide overview, code visible at top).
- * Fallback: label.jpg + slide2.jpg cross-reference.
+ * Single-attempt: sends slide2.jpg (full slide overview, code visible at top)
+ * to Gemini and extracts the case identifier. Returns null on UNREADABLE,
+ * missing slide2.jpg, or parse failure — the technician confirms or overrides
+ * the result via the review queue.
  *
  * Labels contain:
  *   - Printed text: case number (e.g., AP26000388 or IM26000100)
@@ -15,7 +16,7 @@
  *   C  = Citologia
  *   IM = Imuno-histoquímico
  *
- * Pattern: [AP|PA|C|IM][6-8 digits][letter][optional digit(s)]
+ * Pattern: [AP|PA|C|IM][6-12 digits][letter][optional digit(s)]
  */
 
 import { readFile, access } from 'fs/promises';
