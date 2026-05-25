@@ -483,6 +483,24 @@ Em caso de dúvidas ou necessidade de suporte:
 
 ---
 
+## Review queue (technician-in-the-loop)
+
+When `EDGE_REVIEW_QUEUE=true`, every newly-discovered slide is held in
+`review_status='pending'` until a technician confirms the name through the
+dashboard. Confirmation also captures the clinical context for the case
+(`exam_type`, `subtipo`, `sexo`, `idade`, `material`, `hipotese`) which is
+projected onto `cases_read.clinical_context` in the cloud and feeds the AI
+Laudo pipeline.
+
+Env vars:
+- `EDGE_REVIEW_QUEUE` — `true` to enable. Default `false` (legacy behavior).
+- `GOOGLE_GENAI_API_KEY` — required for the single-attempt OCR proposal.
+- `OCR_MODEL` — defaults to `gemini-2.5-flash`.
+
+Quick smoke: `EDGE_REVIEW_QUEUE=true ./scripts/smoke-review-queue.sh`
+
+---
+
 ## Licença
 
 O SuperNavi EDGE é um **software proprietário**.
