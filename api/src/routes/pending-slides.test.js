@@ -11,7 +11,7 @@ const mockRows = [
     created_at: new Date('2026-05-24T10:00:00Z') },
 ];
 
-test('GET /v1/pending-slides returns the queue with proposed names', async () => {
+test('GET /pending-slides returns the queue with proposed names', async () => {
   const fastify = Fastify();
   const route = await import('./pending-slides.js');
   await fastify.register(route.default, {
@@ -21,7 +21,7 @@ test('GET /v1/pending-slides returns the queue with proposed names', async () =>
       countPendingReviewSlides: async () => 1,
     },
   });
-  const res = await fastify.inject({ method: 'GET', url: '/v1/pending-slides' });
+  const res = await fastify.inject({ method: 'GET', url: '/pending-slides' });
   assert.equal(res.statusCode, 200);
   const body = res.json();
   assert.equal(body.total, 1);
@@ -44,7 +44,7 @@ test('GET /:id/image returns the JPEG bytes', async () => {
     skipFlagCheck: true,
     deps: { getSlide: async () => ({ id: 'abc', dsmeta_path: dsmeta, review_status: 'pending' }) },
   });
-  const res = await fastify.inject({ method: 'GET', url: '/v1/pending-slides/abc/image?which=label' });
+  const res = await fastify.inject({ method: 'GET', url: '/pending-slides/abc/image?which=label' });
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers['content-type'], 'image/jpeg');
   assert.deepEqual(res.rawPayload, bytes);
@@ -59,7 +59,7 @@ test('GET /:id/image rejects invalid `which`', async () => {
     skipFlagCheck: true,
     deps: { getSlide: async () => ({ id: 'abc', dsmeta_path: '/tmp', review_status: 'pending' }) },
   });
-  const res = await fastify.inject({ method: 'GET', url: '/v1/pending-slides/abc/image?which=../etc/passwd' });
+  const res = await fastify.inject({ method: 'GET', url: '/pending-slides/abc/image?which=../etc/passwd' });
   assert.equal(res.statusCode, 400);
   await fastify.close();
 });
@@ -81,7 +81,7 @@ test('POST /:id/confirm — happy path with new case context', async () => {
     },
   });
   const res = await fastify.inject({
-    method: 'POST', url: '/v1/pending-slides/abc/confirm',
+    method: 'POST', url: '/pending-slides/abc/confirm',
     payload: {
       filename: 'AP26000388A1',
       clinicalContext: { exam_type: 'AP', subtipo: 'biopsia_pele', sexo: 'F', idade: 62,
@@ -103,7 +103,7 @@ test('POST /:id/confirm — rejects bad filename', async () => {
     deps: { getSlide: async () => ({ review_status: 'pending' }) },
   });
   const res = await fastify.inject({
-    method: 'POST', url: '/v1/pending-slides/abc/confirm',
+    method: 'POST', url: '/pending-slides/abc/confirm',
     payload: { filename: 'lixo123' },
   });
   assert.equal(res.statusCode, 400);
@@ -118,7 +118,7 @@ test('POST /:id/confirm — 409 when slide is not pending', async () => {
     deps: { getSlide: async () => ({ review_status: 'confirmed' }) },
   });
   const res = await fastify.inject({
-    method: 'POST', url: '/v1/pending-slides/abc/confirm',
+    method: 'POST', url: '/pending-slides/abc/confirm',
     payload: { filename: 'AP26000388A1' },
   });
   assert.equal(res.statusCode, 409);
@@ -137,7 +137,7 @@ test('POST /:id/rescan — marks slide as rescan without events', async () => {
       emitSlideRegistered: async () => { throw new Error('should not be called'); },
     },
   });
-  const res = await fastify.inject({ method: 'POST', url: '/v1/pending-slides/abc/rescan' });
+  const res = await fastify.inject({ method: 'POST', url: '/pending-slides/abc/rescan' });
   assert.equal(res.statusCode, 200);
   assert.deepEqual(calls, [['abc', 'rescan']]);
   await fastify.close();

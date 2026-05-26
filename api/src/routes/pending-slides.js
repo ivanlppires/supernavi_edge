@@ -75,7 +75,7 @@ export default async function pendingSlidesRoutes(fastify, opts = {}) {
     ...opts.deps,
   };
 
-  fastify.get('/v1/pending-slides', async () => {
+  fastify.get('/pending-slides', async () => {
     const [rows, total] = await Promise.all([
       deps.listPendingReviewSlides(),
       deps.countPendingReviewSlides(),
@@ -94,7 +94,7 @@ export default async function pendingSlidesRoutes(fastify, opts = {}) {
     };
   });
 
-  fastify.get('/v1/pending-slides/:id/image', async (req, reply) => {
+  fastify.get('/pending-slides/:id/image', async (req, reply) => {
     const { id } = req.params;
     const which = req.query.which || 'label';
     if (which !== 'label' && which !== 'slide2') {
@@ -115,7 +115,7 @@ export default async function pendingSlidesRoutes(fastify, opts = {}) {
     }
   });
 
-  fastify.post('/v1/pending-slides/:id/confirm', async (req, reply) => {
+  fastify.post('/pending-slides/:id/confirm', async (req, reply) => {
     const parsed = confirmBodySchema.safeParse(req.body);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid body', details: parsed.error.format() });
@@ -163,7 +163,7 @@ export default async function pendingSlidesRoutes(fastify, opts = {}) {
     return { ok: true, slide_id: slide.id, filename: newFilename, case_base: caseBase };
   });
 
-  fastify.post('/v1/pending-slides/:id/rescan', async (req, reply) => {
+  fastify.post('/pending-slides/:id/rescan', async (req, reply) => {
     const slide = await deps.getSlide(req.params.id);
     if (!slide) return reply.code(404).send({ error: 'slide not found' });
     if (slide.review_status !== 'pending') {
