@@ -65,13 +65,15 @@ async function buildApp() {
   // Auto-load plugins
   await app.register(autoLoad, {
     dir: join(__dirname, 'plugins'),
-    options: {}
+    options: {},
+    ignorePattern: /\.test\.js$/,
   });
 
   // Auto-load routes
   await app.register(autoLoad, {
     dir: join(__dirname, 'routes'),
-    options: { prefix: '/v1' }
+    options: { prefix: '/v1' },
+    ignorePattern: /\.test\.js$/,
   });
 
   return app;
