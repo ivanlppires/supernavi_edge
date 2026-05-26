@@ -1721,29 +1721,32 @@
     });
   }
 
-  // === Review queue feature flag ============================
-  // When disabled, strip the badge/panel/modal from the DOM so the wiring
-  // added by Tasks 11-14 finds null elements and short-circuits via its
-  // existing `if (element)` guards.
+  // === Review queue (Tasks 11-14) ============================
+  // Single async IIFE: capability check gates ALL wiring. When the feature is
+  // disabled, removes badge/panel/modal from DOM and returns — nothing else
+  // attaches, nothing fetches /v1/pending-slides.
   (async () => {
+    let reviewQueueEnabled = false;
     try {
       const r = await fetch('/v1/capabilities');
       if (r.ok) {
         const caps = await r.json();
-        if (!caps?.features?.review_queue) {
-          ['pendingBadge', 'pendingPanel', 'reviewModal'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.remove();
-          });
-        }
+        reviewQueueEnabled = caps?.features?.review_queue === true;
       }
     } catch (err) {
       console.warn('Failed to check review_queue capability:', err);
     }
-  })();
+
+    if (!reviewQueueEnabled) {
+      ['pendingBadge', 'pendingPanel', 'reviewModal'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+      });
+      return;
+    }
 
   // =====================
-  //  Review queue: pending badge
+  //  Review queue: pending badge (Task 11)
   // =====================
   const pendingBadge = document.getElementById('pendingBadge');
   const pendingCountEl = document.getElementById('pendingCount');
@@ -1754,8 +1757,11 @@
     pendingBadge.classList.toggle('hidden', count === 0);
   }
 
-  // Initial fetch on page load
-  fetch('/v1/pending-slides').then(r => r.json()).then(d => updatePendingBadge(d.total)).catch(() => {});
+  // Initial fetch on page load — defensive: check r.ok before parsing
+  fetch('/v1/pending-slides')
+    .then(r => r.ok ? r.json() : null)
+    .then(d => { if (d && typeof d.total === 'number') updatePendingBadge(d.total); })
+    .catch(() => {});
 
   if (pendingBadge) {
     pendingBadge.addEventListener('click', () => {
@@ -1921,6 +1927,7 @@
 
     try {
       const r = await fetch('/v1/pending-slides');
+      if (!r.ok) { closeReviewModal(); return; }
       const data = await r.json();
       const slide = data.slides.find(s => s.id === slideId) || data.slides[0];
       if (!slide) { closeReviewModal(); return; }
@@ -1963,6 +1970,7 @@
       if (!slideId) {
         try {
           const r = await fetch('/v1/pending-slides');
+          if (!r.ok) return;
           const data = await r.json();
           if (data.slides.length === 0) return;
           slideId = data.slides[0].id;
@@ -2151,6 +2159,7 @@
   async function loadNextOrClose() {
     try {
       const r = await fetch('/v1/pending-slides');
+      if (!r.ok) { closeReviewModal(); return; }
       const next = await r.json();
       if (next.slides.length > 0) await openReview(next.slides[0].id);
       else closeReviewModal();
@@ -2210,6 +2219,8 @@
       if (e.key === 'Escape') closeReviewModal();
     });
   }
+
+  })(); // end review-queue async IIFE
 
   // =====================
   //  Initialization
