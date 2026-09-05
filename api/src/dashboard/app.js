@@ -1215,20 +1215,28 @@
   //  Maintenance: Republish Previews
   // =====================
   function initMaintenance() {
-    const btn = $('#btnRepublishPreviews');
+    wireMaintenanceAction('#btnRepublishPreviews', '#republishStatus',
+      '/v1/admin/slides/republish-all-previews', { force: true });
+    // Backfill: sends the label photo of every uploaded slide to the cloud (viewer shows it in the Info tab)
+    wireMaintenanceAction('#btnPublishLabels', '#publishLabelsStatus',
+      '/v1/admin/slides/publish-all-labels', {});
+  }
+
+  function wireMaintenanceAction(btnSelector, statusSelector, url, body) {
+    const btn = $(btnSelector);
     if (!btn) return;
 
     btn.addEventListener('click', async () => {
-      const statusEl = $('#republishStatus');
+      const statusEl = $(statusSelector);
       btn.disabled = true;
       setText(statusEl, 'Enfileirando...');
       statusEl.className = 'maintenance-status';
 
       try {
-        const res = await fetch('/v1/admin/slides/republish-all-previews', {
+        const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ force: true }),
+          body: JSON.stringify(body),
         });
 
         if (!res.ok) {
