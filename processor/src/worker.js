@@ -12,7 +12,6 @@ import { generateBigTIFF, cleanupBigTIFF, checkDiskSpace, calculateParallelSlots
 import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 import { pipelineLog } from './lib/pipeline-log.js';
-import { canEmitRegistered } from './lib/review-gate.js';
 import { copyLabelFromDsmeta } from './lib/label-asset.js';
 import { uploadLabelPhoto, bigtiffPrefix, buildBigtiffPublishedPayload } from './label-publisher.js';
 import { readFileSync } from 'fs';
@@ -24,9 +23,9 @@ const PKG_VERSION = (() => {
 
 /**
  * name_confirmed flag sent to the cloud with SlideRegistered: true unless the
- * slide is still waiting for (or failed) technician review. NULL review_status
- * = legacy slide, treated as confirmed. The cloud refuses to auto-link
- * unconfirmed names to patient cases.
+ * slide is still waiting for (or failed) review — i.e. its name came from OCR
+ * or it has no name yet. NULL review_status = legacy slide, treated as
+ * confirmed. The cloud never auto-links an unconfirmed name to a patient case.
  */
 function isNameConfirmed(reviewStatus) {
   return reviewStatus !== 'pending' && reviewStatus !== 'rescan';
@@ -517,27 +516,25 @@ async function processJob(job) {
           );
           const slide = slideRow.rows[0];
           if (slide) {
-            if (!(await canEmitRegistered(getPool(), job.slideId))) {
-              console.log(`[Sync] Skipping SlideRegistered for ${job.slideId.substring(0, 12)} (not confirmed)`);
-            } else {
-              await getPool().query(
-                `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-                 VALUES ($1, $2, $3, $4)`,
-                ['slide', job.slideId, 'registered', JSON.stringify({
-                  slide_id: job.slideId,
-                  case_id: null,
-                  svs_filename: slide.original_filename,
-                  width: slide.width || 0,
-                  height: slide.height || 0,
-                  mpp: parseFloat(slide.mpp) || 0,
-                  external_case_id: slide.external_case_id || null,
-                  external_case_base: slide.external_case_base || null,
-                  external_slide_label: slide.external_slide_label || null,
-                  name_confirmed: isNameConfirmed(slide.review_status),
-                })]
-              );
-              console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)} (after TILEGEN)`);
-            }
+            // Always emitted: an unconfirmed (OCR) name travels with name_confirmed=false
+            // and the cloud keeps it out of PathoWeb until a person confirms it.
+            await getPool().query(
+              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+               VALUES ($1, $2, $3, $4)`,
+              ['slide', job.slideId, 'registered', JSON.stringify({
+                slide_id: job.slideId,
+                case_id: null,
+                svs_filename: slide.original_filename,
+                width: slide.width || 0,
+                height: slide.height || 0,
+                mpp: parseFloat(slide.mpp) || 0,
+                external_case_id: slide.external_case_id || null,
+                external_case_base: slide.external_case_base || null,
+                external_slide_label: slide.external_slide_label || null,
+                name_confirmed: isNameConfirmed(slide.review_status),
+              })]
+            );
+            console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)} (after TILEGEN)`);
           }
         } catch (outboxErr) {
           console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
@@ -742,28 +739,24 @@ async function processJob(job) {
           );
           const s = slideData.rows[0];
           if (s) {
-            if (!(await canEmitRegistered(getPool(), job.slideId))) {
-              console.log(`[Sync] Skipping SlideRegistered for ${job.slideId.substring(0, 12)} (not confirmed)`);
-            } else {
-              await getPool().query(
-                `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-                 VALUES ($1, $2, $3, $4)`,
-                ['slide', job.slideId, 'registered', JSON.stringify({
-                  slide_id: job.slideId,
-                  case_id: null,
-                  svs_filename: s.original_filename,
-                  width: s.width || 0,
-                  height: s.height || 0,
-                  mpp: parseFloat(s.mpp) || 0,
-                  external_case_id: s.external_case_id || null,
-                  external_case_base: s.external_case_base || null,
-                  external_slide_label: s.external_slide_label || null,
-                  pipeline_mode: 'bigtiff_iiif',
-                  name_confirmed: isNameConfirmed(s.review_status),
-                })]
-              );
-              console.log(`[BIGTIFF] SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
-            }
+            await getPool().query(
+              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+               VALUES ($1, $2, $3, $4)`,
+              ['slide', job.slideId, 'registered', JSON.stringify({
+                slide_id: job.slideId,
+                case_id: null,
+                svs_filename: s.original_filename,
+                width: s.width || 0,
+                height: s.height || 0,
+                mpp: parseFloat(s.mpp) || 0,
+                external_case_id: s.external_case_id || null,
+                external_case_base: s.external_case_base || null,
+                external_slide_label: s.external_slide_label || null,
+                pipeline_mode: 'bigtiff_iiif',
+                name_confirmed: isNameConfirmed(s.review_status),
+              })]
+            );
+            console.log(`[BIGTIFF] SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
           }
         } catch (outboxErr) {
           console.error(`[BIGTIFF] Failed to emit SlideRegistered (non-fatal): ${outboxErr.message}`);
@@ -970,7 +963,7 @@ async function retryFailedTilegen() {
 
 async function worker() {
   console.log('SuperNavi Processor Worker starting...');
-  console.log(`Version: ${PKG_VERSION} — review gate ACTIVE (SlideRegistered only for confirmed/legacy slides)`);
+  console.log(`Version: ${PKG_VERSION} — SlideRegistered always emitted; name_confirmed follows review_status`);
   console.log(`WSI formats (OpenSlide): ${WSI_FORMATS.join(', ')}`);
   console.log(`Pipeline mode: ${PIPELINE_MODE}`);
   if (PIPELINE_MODE === 'bigtiff_iiif') {

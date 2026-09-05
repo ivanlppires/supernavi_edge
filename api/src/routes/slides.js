@@ -2,7 +2,7 @@ import { createReadStream, createWriteStream } from 'fs';
 import { access, readFile, readdir, mkdir, rm } from 'fs/promises';
 import { join, extname, basename } from 'path';
 import { pipeline } from 'stream/promises';
-import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide, updateSlideOcr, createJob, deduplicateSlideLabel } from '../db/slides.js';
+import { listSlides, getSlide, updateLevelReadyMax, findSlideByFilename, deleteSlide, updateSlideOcr, createJob, deduplicateSlideLabel, setSlideReviewStatus, getRecentMaxCaseBase } from '../db/slides.js';
 import { generateTile, getPendingCount } from '../services/tilegen-svs.js';
 import { enqueueJob } from '../lib/queue.js';
 import { query } from '../db/index.js';
@@ -11,7 +11,6 @@ import { parseSlideName, validateSlideName } from '../lib/slide-name-parser.js';
 import { parseCaseBase } from '../lib/case-plausibility.js';
 import { resolveLabelImagePath } from '../lib/label-image.js';
 import { stat } from 'fs/promises';
-import { shouldEmitRegistered } from '../lib/review-gate.js';
 import { pipelineLog } from '../services/pipeline-log.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
@@ -68,13 +67,12 @@ async function countTilesOnDisk(slideId) {
 }
 
 /**
- * After a name change (manual rename or re-OCR), push the new name to the
- * cloud when allowed. The review gate normally holds SlideRegistered until the
- * technician confirms — but if the cloud ALREADY received a name for this
- * slide (it was synced before the correction), the correction must go out
- * regardless, otherwise the cloud keeps showing the wrong (possibly other
- * patient's) case. Records the outcome in slide_pipeline_events so a silent
- * "renamed but never synced" state is visible in the dashboard timeline.
+ * After a name change (manual rename or re-OCR), push the new name to the cloud.
+ * Nothing gates the event any more: if processing already finished it goes
+ * out now (with name_confirmed telling the cloud whether a person vouched for
+ * the name); otherwise the processor emits it when processing completes.
+ * The outcome is recorded in slide_pipeline_events so a silent "renamed but
+ * never synced" state stays visible in the dashboard timeline.
  *
  * @returns {Promise<{ synced: boolean, note: string }>}
  */
@@ -83,17 +81,8 @@ async function reemitAfterNameChange({ slideId, slide, newFilename, source, name
   if (!slide) return { synced: false, note: 'slide not found' };
 
   if (slide.tilegen_status !== 'done') {
-    const note = 'processing not finished; the new name will be sent when processing completes (if the slide is confirmed)';
-    await pipelineLog(slideId, 'outbox', 'info', `${tag} name set to ${newFilename} — ${note}`, { source });
-    return { synced: false, note };
-  }
-
-  const decision = await shouldEmitRegistered(slideId);
-  if (!decision.emit) {
-    const note = `not synced to cloud (${decision.reason}); confirm the slide in the review queue to publish it`;
-    console.log(`${tag} Skipping SlideRegistered for ${slideId.substring(0, 12)} (${decision.reason})`);
-    await pipelineLog(slideId, 'outbox', 'warn', `${tag} renamed to ${newFilename} but ${note}`,
-      { source, reviewStatus: decision.reviewStatus });
+    const note = 'processing not finished; the new name will be sent when processing completes';
+    await pipelineLog(slideId, 'outbox', 'info', `${tag} name set to ${newFilename} — ${note}`, { source, nameConfirmed });
     return { synced: false, note };
   }
 
@@ -113,10 +102,9 @@ async function reemitAfterNameChange({ slideId, slide, newFilename, source, name
       name_confirmed: nameConfirmed,
     })]
   );
-  const note = `SlideRegistered queued for cloud (${decision.reason})`;
+  const note = `SlideRegistered queued for cloud (name_confirmed=${nameConfirmed})`;
   console.log(`${tag} ${note} for ${slideId.substring(0, 12)} → ${newFilename}`);
-  await pipelineLog(slideId, 'outbox', 'info', `${tag} ${note}: ${newFilename}`,
-    { source, reviewStatus: decision.reviewStatus, nameConfirmed });
+  await pipelineLog(slideId, 'outbox', 'info', `${tag} ${note}: ${newFilename}`, { source, nameConfirmed });
   return { synced: true, note };
 }
 
@@ -546,7 +534,9 @@ export default async function slidesRoutes(fastify) {
     };
   });
 
-  // Manual rename: technician manually sets the slide name
+  // Manual rename: a person sets the slide name (dashboard queue or the viewer
+  // via the cloud). Validated (format + plausibility), marks the name confirmed
+  // and pushes it to the cloud, which then links the slide to its PathoWeb case.
   fastify.post('/slides/:slideId/rename', async (request, reply) => {
     const { name } = request.body || {};
 
@@ -562,11 +552,15 @@ export default async function slidesRoutes(fastify) {
       return { error: 'Slide not found' };
     }
 
-    const parsed = parseOcrResponse(name.trim());
-    if (!parsed) {
+    const candidate = parseSlideName(name.trim());
+    const base = candidate ? parseCaseBase(candidate.caseBase) : null;
+    const reference = base ? await getRecentMaxCaseBase(base.prefix, base.year) : null;
+    const check = validateSlideName(name.trim(), reference);
+    if (!check.ok) {
       reply.code(400);
-      return { error: 'Invalid format. Expected: AP26000388A1, C26000588A, 26_388A, etc.' };
+      return { error: check.message, code: check.code, reference };
     }
+    const parsed = check.parsed;
 
     const format = slide.format || 'svs';
     const dedupName = await deduplicateSlideLabel(parsed.fullName, slideId);
@@ -579,26 +573,26 @@ export default async function slidesRoutes(fastify) {
       externalSlideLabel: dedupName,
       ocrStatus: 'done',
     });
+    // A person vouched for this name: confirmed, whatever the OCR proposed
+    await setSlideReviewStatus(slideId, 'confirmed');
 
-    // Re-emit SlideRegistered outbox event if tilegen is done
     const slideRow = await query(
-      'SELECT width, height, mpp, tilegen_status, review_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+      'SELECT width, height, mpp, tilegen_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
       [slideId]
     );
-    const s = slideRow.rows[0];
     const sync = await reemitAfterNameChange({
       slideId,
-      slide: s,
+      slide: slideRow.rows[0],
       newFilename,
       source: 'rename',
-      nameConfirmed: s ? true : false,
+      nameConfirmed: true,
     });
 
     return {
       success: true,
       synced: sync.synced,
       syncNote: sync.note,
-      ocrStatus: 'done',
+      nameConfirmed: true,
       fullName: dedupName,
       caseBase: parsed.caseBase,
       slideLabel: parsed.slideLabel,
