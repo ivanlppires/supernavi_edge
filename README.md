@@ -131,6 +131,12 @@ curl http://localhost:3000/v1/slides/{slideId}/manifest
 curl http://localhost:3000/v1/slides/{slideId}/thumb -o thumb.jpg
 ```
 
+### Obter Etiqueta (foto)
+```bash
+curl -o label.jpg http://localhost:3000/v1/slides/{slideId}/label
+```
+404 quando a lâmina não tem `.dsmeta` (upload manual, outro scanner).
+
 ### Obter Tile (On-Demand)
 ```bash
 curl http://localhost:3000/v1/slides/{slideId}/tiles/{z}/{x}/{y}.jpg -o tile.jpg
@@ -483,63 +489,74 @@ Em caso de dúvidas ou necessidade de suporte:
 
 ---
 
-## Review queue (technician-in-the-loop)
+## Identificação de lâminas: OCR + confirmação de uma pessoa
 
-When `EDGE_REVIEW_QUEUE=true`, every newly-discovered slide is held in
-`review_status='pending'` until a technician confirms the name through the
-dashboard. Confirmation also captures the clinical context for the case
-(`exam_type`, `subtipo`, `sexo`, `idade`, `material`, `hipotese`) which is
-projected onto `cases_read.clinical_context` in the cloud and feeds the AI
-Laudo pipeline.
+O padrão é o OCR. Toda lâmina do scanner Motic (`{barcode}_{datetime}.svs`, sem
+número de caso no nome) passa por `api/src/lib/label-ocr.js`, que envia a foto
+da lâmina inteira (`.dsmeta/slide2.jpg`) ao Gemini e recebe o identificador.
+**Nada espera ninguém**: a lâmina é processada e enviada à nuvem de qualquer
+jeito. O que espera é a visibilidade no PathoWeb.
 
-Env vars:
-- `EDGE_REVIEW_QUEUE` — `true` to enable. Default `false` (legacy behavior).
-- `GOOGLE_GENAI_API_KEY` — required for the single-attempt OCR proposal.
-- `OCR_MODEL` — defaults to `gemini-2.5-flash`.
-- `OCR_MAX_OUTPUT_TOKENS` — defaults to `1024`. Gemini 2.5 "thinking" tokens
-  count against this limit; a small value truncates the answer.
-- `OCR_THINKING_BUDGET` — defaults to `0` (thinking off for this trivial task).
-  Sent best-effort; if the API rejects it the call is retried without it.
+- `review_status = 'confirmed'`: nome digitado por uma pessoa (arquivo já no
+  padrão `AP…`, rename no dashboard/viewer, confirmação na fila). O
+  `SlideRegistered` sai com `name_confirmed: true` e a cloud vincula a lâmina
+  ao caso do PathoWeb.
+- `review_status = 'pending'`: nome proposto pelo OCR ou nenhum nome. O evento
+  sai com `name_confirmed: false`; a cloud guarda a lâmina mas **não** a
+  vincula a caso nem a mostra na extensão até alguém confirmar.
 
-Quick smoke: `EDGE_REVIEW_QUEUE=true ./scripts/smoke-review-queue.sh`
+### Fila de revisão (dashboard)
 
-### Safeguards (post-incident 2026-09-04)
+Badge "aguardando" no cabeçalho → painel com as pendentes → modal com as fotos
+(`label.jpg` / `slide2.jpg`) e a leitura do OCR preenchida:
+**Confirmar** (aceita), corrigir e confirmar, **Rescanear** (ilegível) ou
+**Confirmar todas as leituras** (`POST /v1/pending-slides/confirm-all`) para
+aceitar em lote. O viewer também confirma/renomeia (aba Info, ao lado da foto
+da etiqueta) pela rota de rename da cloud, que chega ao edge pelo túnel.
 
-A truncated OCR answer (`"26-2"` cut from `"26-2614A"`) was expanded by the
-abbreviated-format parser to `AP26000002` — a real case of another patient —
-and synced to the cloud before anyone reviewed it. The rename done later on
-the edge never reached the cloud because the review gate suppressed the
-re-emission. The following rules now apply:
+### Salvaguardas (incidente 2026-09-04)
 
-1. **OCR truncation is never trusted.** If Gemini's `finishReason` is
-   `MAX_TOKENS` (or the answer is blocked) the slide is left **unnamed** in the
-   review queue; the technician types the name.
-2. **Implausible case numbers are dropped.** An OCR proposal whose number is
-   less than 1/10 of the highest case number registered in the last 120 days
-   for the same prefix/year (e.g. `AP26000002` while the lab is at
-   `AP26002643`) is treated as unreadable. Early in the year (reference below
-   100) the check is inactive.
-3. **Corrections always propagate.** `POST /v1/slides/:id/rename` (and
-   `/reocr`) re-emit `SlideRegistered` when the cloud already received a name
-   for the slide, even if the slide is still `pending`. Otherwise the rename is
-   recorded in the slide's pipeline timeline as *not synced* and the response
-   carries `synced: false` + `syncNote`.
-4. **Every path goes through the queue.** Slides ingested through the inbox
-   watcher are held as `pending` too, not only scanner-adapter discoveries.
-5. **`name_confirmed` travels with the event.** `SlideRegistered` carries
-   `name_confirmed` (`true` after confirm/rename; `false` for pending/rescan).
-   The cloud stores it and never auto-links an unconfirmed name to a patient
-   case, nor lists it under that case in the PathoWeb extension.
-6. **The processor enforces the gate.** After upgrading, check
-   `docker compose logs processor | grep "review gate"` — the worker prints
-   `Version: <x.y.z> — review gate ACTIVE` on start. An old processor image
-   emits `SlideRegistered` for pending slides and silently defeats the queue.
+Uma leitura truncada (`"26-2"` de `"26-2614A"`) virou `AP26000002`, caso real
+de outra paciente, e a lâmina foi exibida no caso errado. Regras que valem
+para OCR e para nomes digitados:
 
-Every OCR outcome (raw answer, `finishReason`, proposal or rejection reason)
-is written to `slide_pipeline_events` (stage `ingest`) and visible in
-`GET /v1/slides/:id/pipeline`.
+1. Resposta com `finishReason` ≠ `STOP` (cortada/bloqueada), `UNREADABLE` ou
+   que não passe no parser = sem nome (lâmina pendente).
+2. Forma abreviada exige **3+ dígitos** após o traço (`26-2` recusado). Parser
+   único em `api/src/lib/slide-name-parser.js`.
+3. Número muito abaixo dos casos recentes (menos de 1/10 do maior caso dos
+   últimos 120 dias, `case-plausibility.js`) é descartado/recusado.
+4. Nome não confirmado nunca vincula a caso na cloud (`name_confirmed`).
+5. Toda correção reemite o `SlideRegistered` (sem gate); o resultado fica na
+   timeline da lâmina (`GET /v1/slides/:id/pipeline`).
 
----
+### Variáveis (OCR)
+
+- `GOOGLE_GENAI_API_KEY` — obrigatória para o OCR (`LABEL_OCR_ENABLED=false`
+  desliga; sem chave o OCR fica desligado e toda lâmina Motic entra pendente).
+- `OCR_MODEL` — padrão `gemini-3.1-pro-preview` (linha Gemini 3 Pro).
+- `OCR_THINKING_LEVEL` — `MINIMAL|LOW|MEDIUM|HIGH`, padrão `LOW`; vazio deixa o
+  modelo decidir.
+- `OCR_MAX_OUTPUT_TOKENS` — padrão `256` (a resposta é só o identificador).
+
+### Foto da etiqueta
+
+`label.jpg` é copiada para `derived/{slideId}/label.jpg` no P0, enviada ao
+Wasabi ao lado de `thumb.jpg` e anunciada em `preview/published` como
+`label_key`; o viewer mostra a foto na aba Info. Servida localmente por
+`GET /v1/slides/:id/label` (e `/slide2` para a foto da lâmina inteira).
+
+Lâminas enviadas antes desta versão: Configurações → Manutenção →
+**Publicar Etiquetas** (ou `POST /v1/admin/slides/publish-all-labels`): job
+`LABEL_PUBLISH` que copia a foto, envia e reemite `preview/published` com
+`label_key`.
+
+## Testes
+
+```bash
+node --test api/src/lib/*.test.js api/src/db/*.test.js api/src/services/*.test.js processor/src/lib/*.test.js processor/src/*.test.js
+node --test --test-force-exit api/src/routes/*.test.js
+```
 
 ## Licença
 
