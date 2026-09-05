@@ -19,9 +19,11 @@ import { join, extname } from 'path';
 import { constants } from 'fs';
 import { hashFile } from '../lib/hash.js';
 import { parseDsmeta, parseMoticPath } from '../lib/dsmeta-parser.js';
-import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides, deduplicateSlideLabel, setSlideReviewStatus } from '../db/slides.js';
+import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides, deduplicateSlideLabel, setSlideReviewStatus, getRecentMaxCaseBase } from '../db/slides.js';
 import { query } from '../db/index.js';
-import { ocrLabel, isOcrEnabled } from '../lib/label-ocr.js';
+import { ocrLabelDetailed, isOcrEnabled } from '../lib/label-ocr.js';
+import { isImplausiblyLowCaseNumber, parseCaseBase } from '../lib/case-plausibility.js';
+import { pipelineLog } from './pipeline-log.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { scannerFileExists, insertScannerFile, getAllScannerFilePaths } from '../db/scanner.js';
 import { enqueueJob } from '../lib/queue.js';
@@ -92,6 +94,9 @@ async function processNewFile(filePath) {
   let ocrStatus = null;
   let dsmetaPath = null;
   let externalFields = null;
+  // slide_pipeline_events has a FK to slides — OCR runs before createSlide, so
+  // buffer the observability entries and flush them once the row exists.
+  const deferredLogs = [];
 
   const dsmetaDir = filePath + '.dsmeta';
 
@@ -116,7 +121,23 @@ async function processNewFile(filePath) {
       dsmetaPath = dsmetaDir;
 
       console.log(`[Scanner] OCR: found dsmeta at ${dsmetaDir}`);
-      const ocrResult = await ocrLabel(dsmetaDir);
+      const ocr = await ocrLabelDetailed(dsmetaDir);
+      let ocrResult = ocr.result;
+
+      // Sanity check: a proposal far below the lab's recent case numbers is a
+      // truncated/misread label (e.g. "26-2" → AP26000002). Drop it rather than
+      // attach the slide to the wrong patient; the technician types the name.
+      if (ocrResult) {
+        const parsedBase = parseCaseBase(ocrResult.caseBase);
+        const reference = parsedBase ? await getRecentMaxCaseBase(parsedBase.prefix, parsedBase.year) : null;
+        if (reference && isImplausiblyLowCaseNumber(ocrResult.caseBase, reference)) {
+          console.warn(`[Scanner] OCR: "${ocr.raw}" → ${ocrResult.fullName} is implausibly low vs recent ${reference}; treating as unreadable`);
+          deferredLogs.push(['ingest', 'warn',
+            `OCR proposal ${ocrResult.fullName} rejected: implausible vs recent cases (${reference}); slide left unnamed for review`,
+            { raw: ocr.raw, finishReason: ocr.finishReason, reference }]);
+          ocrResult = null;
+        }
+      }
 
       if (ocrResult) {
         const dedupName = await deduplicateSlideLabel(ocrResult.fullName, slideId);
@@ -129,9 +150,15 @@ async function processNewFile(filePath) {
           externalCaseBase: ocrResult.caseBase,
           externalSlideLabel: dedupName,
         };
+        deferredLogs.push(['ingest', 'info', `OCR proposed ${dedupName} (awaiting review)`,
+          { raw: ocr.raw, finishReason: ocr.finishReason }]);
       } else {
-        console.log(`[Scanner] OCR: could not read label for ${filename}, processing with original name`);
+        console.log(`[Scanner] OCR: no usable name for ${filename} (${ocr.status}, raw="${ocr.raw ?? ''}", finishReason=${ocr.finishReason || 'n/a'}), processing with original name`);
         ocrStatus = 'pending';
+        if (ocr.status !== 'no_image' && !deferredLogs.length) {
+          deferredLogs.push(['ingest', 'warn', `OCR produced no name (${ocr.status})`,
+            { raw: ocr.raw, finishReason: ocr.finishReason }]);
+        }
       }
     } catch (err) {
       if (err.code === 'ENOENT') {
@@ -151,6 +178,10 @@ async function processNewFile(filePath) {
     rawPath: filePath,
     format,
   });
+
+  for (const [stage, level, message, details] of deferredLogs) {
+    await pipelineLog(slideId, stage, level, message, details);
+  }
 
   if (isReviewQueueEnabled()) {
     // Every new slide starts as pending review (technician confirms name +

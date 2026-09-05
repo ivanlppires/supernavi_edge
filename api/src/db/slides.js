@@ -239,3 +239,21 @@ export async function setSlideReviewStatus(id, status) {
   );
   return result.rowCount > 0;
 }
+
+/**
+ * Highest external_case_base registered recently for a prefix + 2-digit year
+ * (e.g. 'AP', '26' → 'AP26002643'). Used to sanity-check OCR proposals.
+ * Case bases are fixed-width (prefix + 8 digits) so lexical order == numeric.
+ */
+export async function getRecentMaxCaseBase(prefix, year, days = 120) {
+  const result = await query(
+    `SELECT external_case_base
+       FROM slides
+      WHERE external_case_base ~ $1
+        AND created_at > NOW() - make_interval(days => $2::int)
+      ORDER BY external_case_base DESC
+      LIMIT 1`,
+    [`^${prefix}${year}\\d{6}$`, days]
+  );
+  return result.rows[0]?.external_case_base || null;
+}

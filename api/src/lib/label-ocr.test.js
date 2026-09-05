@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseOcrResponse } from './label-ocr.js';
+import { parseOcrResponse, interpretOcrResponse } from './label-ocr.js';
 
 describe('parseOcrResponse', () => {
   it('parses a clean AP response', () => {
@@ -181,5 +181,44 @@ describe('parseOcrResponse', () => {
       caseBase: 'AP24000500',
       slideLabel: '',
     });
+  });
+});
+
+// Incident 2026-09-04: a truncated answer ("26-2" cut from "26-2614A") parses
+// to a real-looking case (AP26000002). finishReason tells us the answer was cut.
+describe('interpretOcrResponse', () => {
+  it('accepts a complete answer (STOP)', () => {
+    const r = interpretOcrResponse({ text: '26-2614A', finishReason: 'STOP' });
+    assert.equal(r.status, 'ok');
+    assert.equal(r.result.fullName, 'AP26002614A');
+  });
+
+  it('accepts an answer without finishReason (older API responses)', () => {
+    const r = interpretOcrResponse({ text: 'AP26002614A', finishReason: null });
+    assert.equal(r.status, 'ok');
+  });
+
+  it('never trusts a truncated answer, even if it parses', () => {
+    const r = interpretOcrResponse({ text: '26-2', finishReason: 'MAX_TOKENS' });
+    assert.equal(r.status, 'truncated');
+    assert.equal(r.result, null);
+    assert.equal(r.raw, '26-2');
+  });
+
+  it('treats safety/other blocks as blocked', () => {
+    const r = interpretOcrResponse({ text: '', finishReason: 'SAFETY' });
+    assert.equal(r.status, 'blocked');
+    assert.equal(r.result, null);
+  });
+
+  it('maps UNREADABLE and empty text to unreadable', () => {
+    assert.equal(interpretOcrResponse({ text: 'UNREADABLE', finishReason: 'STOP' }).status, 'unreadable');
+    assert.equal(interpretOcrResponse({ text: '  ', finishReason: 'STOP' }).status, 'unreadable');
+  });
+
+  it('flags text that does not parse as unparsed (keeps raw for the log)', () => {
+    const r = interpretOcrResponse({ text: 'I cannot read this', finishReason: 'STOP' });
+    assert.equal(r.status, 'unparsed');
+    assert.equal(r.raw, 'I cannot read this');
   });
 });

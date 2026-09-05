@@ -496,8 +496,48 @@ Env vars:
 - `EDGE_REVIEW_QUEUE` — `true` to enable. Default `false` (legacy behavior).
 - `GOOGLE_GENAI_API_KEY` — required for the single-attempt OCR proposal.
 - `OCR_MODEL` — defaults to `gemini-2.5-flash`.
+- `OCR_MAX_OUTPUT_TOKENS` — defaults to `1024`. Gemini 2.5 "thinking" tokens
+  count against this limit; a small value truncates the answer.
+- `OCR_THINKING_BUDGET` — defaults to `0` (thinking off for this trivial task).
+  Sent best-effort; if the API rejects it the call is retried without it.
 
 Quick smoke: `EDGE_REVIEW_QUEUE=true ./scripts/smoke-review-queue.sh`
+
+### Safeguards (post-incident 2026-09-04)
+
+A truncated OCR answer (`"26-2"` cut from `"26-2614A"`) was expanded by the
+abbreviated-format parser to `AP26000002` — a real case of another patient —
+and synced to the cloud before anyone reviewed it. The rename done later on
+the edge never reached the cloud because the review gate suppressed the
+re-emission. The following rules now apply:
+
+1. **OCR truncation is never trusted.** If Gemini's `finishReason` is
+   `MAX_TOKENS` (or the answer is blocked) the slide is left **unnamed** in the
+   review queue; the technician types the name.
+2. **Implausible case numbers are dropped.** An OCR proposal whose number is
+   less than 1/10 of the highest case number registered in the last 120 days
+   for the same prefix/year (e.g. `AP26000002` while the lab is at
+   `AP26002643`) is treated as unreadable. Early in the year (reference below
+   100) the check is inactive.
+3. **Corrections always propagate.** `POST /v1/slides/:id/rename` (and
+   `/reocr`) re-emit `SlideRegistered` when the cloud already received a name
+   for the slide, even if the slide is still `pending`. Otherwise the rename is
+   recorded in the slide's pipeline timeline as *not synced* and the response
+   carries `synced: false` + `syncNote`.
+4. **Every path goes through the queue.** Slides ingested through the inbox
+   watcher are held as `pending` too, not only scanner-adapter discoveries.
+5. **`name_confirmed` travels with the event.** `SlideRegistered` carries
+   `name_confirmed` (`true` after confirm/rename; `false` for pending/rescan).
+   The cloud stores it and never auto-links an unconfirmed name to a patient
+   case, nor lists it under that case in the PathoWeb extension.
+6. **The processor enforces the gate.** After upgrading, check
+   `docker compose logs processor | grep "review gate"` — the worker prints
+   `Version: <x.y.z> — review gate ACTIVE` on start. An old processor image
+   emits `SlideRegistered` for pending slides and silently defeats the queue.
+
+Every OCR outcome (raw answer, `finishReason`, proposal or rejection reason)
+is written to `slide_pipeline_events` (stage `ingest`) and visible in
+`GET /v1/slides/:id/pipeline`.
 
 ---
 
