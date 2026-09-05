@@ -12,7 +12,8 @@ import { generateBigTIFF, cleanupBigTIFF, checkDiskSpace, calculateParallelSlots
 import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 import { pipelineLog } from './lib/pipeline-log.js';
-import { canEmitRegistered } from './lib/review-gate.js';
+import { copyLabelFromDsmeta } from './lib/label-asset.js';
+import { uploadLabelPhoto, bigtiffPrefix, buildBigtiffPublishedPayload } from './label-publisher.js';
 import { readFileSync } from 'fs';
 
 const PKG_VERSION = (() => {
@@ -22,9 +23,9 @@ const PKG_VERSION = (() => {
 
 /**
  * name_confirmed flag sent to the cloud with SlideRegistered: true unless the
- * slide is still waiting for (or failed) technician review. NULL review_status
- * = legacy slide, treated as confirmed. The cloud refuses to auto-link
- * unconfirmed names to patient cases.
+ * slide is still waiting for (or failed) review — i.e. its name came from OCR
+ * or it has no name yet. NULL review_status = legacy slide, treated as
+ * confirmed. The cloud never auto-links an unconfirmed name to a patient case.
  */
 function isNameConfirmed(reviewStatus) {
   return reviewStatus !== 'pending' && reviewStatus !== 'rescan';
@@ -178,6 +179,60 @@ async function processP1(job) {
     return processSVS_P1(job);
   } else {
     return processImageP1(job);
+  }
+}
+
+/**
+ * LABEL_PUBLISH: send the Motic label photo of an already-uploaded BigTIFF slide
+ * to the cloud (backfill for slides processed before label support). Copies the
+ * photo from .dsmeta if needed, uploads it next to thumb.jpg and re-emits
+ * preview/published with label_key. Never touches slides.status.
+ */
+async function processLabelPublish(job) {
+  const slideId = job.slideId;
+  const tag = `[LABEL] ${slideId.substring(0, 12)}`;
+  try {
+    const r = await getPool().query(
+      `SELECT id, raw_path, pipeline_mode, s3_bigtiff_key, bigtiff_size, cloud_upload_status,
+              width, height, max_level, external_case_id, external_case_base, external_slide_label
+         FROM slides WHERE id = $1`,
+      [slideId]
+    );
+    const slide = r.rows[0];
+    if (!slide) {
+      console.warn(`${tag} slide not found`);
+      return;
+    }
+    if (slide.pipeline_mode !== 'bigtiff_iiif' || !slide.s3_bigtiff_key || slide.cloud_upload_status !== 'done') {
+      await logEvent(slideId, 'preview', 'info', 'Label publish skipped: slide is not an uploaded BigTIFF slide');
+      return;
+    }
+
+    const labelPath = await copyLabelFromDsmeta(slideId, slide.raw_path);
+    if (!labelPath) {
+      await logEvent(slideId, 'preview', 'info', 'No label photo for this slide (.dsmeta/label.jpg not found)');
+      return;
+    }
+
+    const s3Prefix = bigtiffPrefix(slide.s3_bigtiff_key);
+    const labelKey = await uploadLabelPhoto(slideId, s3Prefix);
+    if (!labelKey) {
+      await logEvent(slideId, 'preview', 'warn', 'Label photo upload to the cloud failed');
+      return;
+    }
+
+    const payload = buildBigtiffPublishedPayload({ slide, wasabi: getWasabiConfig(), s3Prefix, labelKey });
+    await getPool().query(
+      `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+       VALUES ($1, $2, $3, $4)`,
+      ['preview', `preview:${slideId}`, 'published', JSON.stringify(payload)]
+    );
+    await logEvent(slideId, 'preview', 'info', `Label photo published: ${labelKey}`);
+    await publishEvent('label:published', { slideId, labelKey, timestamp: Date.now() });
+    console.log(`${tag} label photo published (${labelKey})`);
+  } catch (err) {
+    console.error(`${tag} failed: ${err.message}`);
+    await logEvent(slideId, 'preview', 'error', `Label publish failed: ${err.message}`).catch(() => {});
   }
 }
 
@@ -388,6 +443,9 @@ async function processJob(job) {
           console.log(`  Regenerating thumbnail from ${rawPath}...`);
           await generateThumbnail(rawPath, thumbPath);
         }
+        if (rawPath) {
+          await copyLabelFromDsmeta(job.slideId, rawPath);
+        }
 
         // Optionally delete marker to force re-upload
         if (job.force) {
@@ -458,27 +516,25 @@ async function processJob(job) {
           );
           const slide = slideRow.rows[0];
           if (slide) {
-            if (!(await canEmitRegistered(getPool(), job.slideId))) {
-              console.log(`[Sync] Skipping SlideRegistered for ${job.slideId.substring(0, 12)} (not confirmed)`);
-            } else {
-              await getPool().query(
-                `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-                 VALUES ($1, $2, $3, $4)`,
-                ['slide', job.slideId, 'registered', JSON.stringify({
-                  slide_id: job.slideId,
-                  case_id: null,
-                  svs_filename: slide.original_filename,
-                  width: slide.width || 0,
-                  height: slide.height || 0,
-                  mpp: parseFloat(slide.mpp) || 0,
-                  external_case_id: slide.external_case_id || null,
-                  external_case_base: slide.external_case_base || null,
-                  external_slide_label: slide.external_slide_label || null,
-                  name_confirmed: isNameConfirmed(slide.review_status),
-                })]
-              );
-              console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)} (after TILEGEN)`);
-            }
+            // Always emitted: an unconfirmed (OCR) name travels with name_confirmed=false
+            // and the cloud keeps it out of PathoWeb until a person confirms it.
+            await getPool().query(
+              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+               VALUES ($1, $2, $3, $4)`,
+              ['slide', job.slideId, 'registered', JSON.stringify({
+                slide_id: job.slideId,
+                case_id: null,
+                svs_filename: slide.original_filename,
+                width: slide.width || 0,
+                height: slide.height || 0,
+                mpp: parseFloat(slide.mpp) || 0,
+                external_case_id: slide.external_case_id || null,
+                external_case_base: slide.external_case_base || null,
+                external_slide_label: slide.external_slide_label || null,
+                name_confirmed: isNameConfirmed(slide.review_status),
+              })]
+            );
+            console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)} (after TILEGEN)`);
           }
         } catch (outboxErr) {
           console.error(`Failed to emit SlideRegistered event (non-fatal): ${outboxErr.message}`);
@@ -557,6 +613,7 @@ async function processJob(job) {
                         wasabi_endpoint: wCfg.endpoint,
                         wasabi_prefix: getSlidePrefix(job.slideId),
                         thumb_key: `${wCfg.prefixBase}/${job.slideId}/thumb.jpg`,
+                        ...(uploadResult.labelKey ? { label_key: uploadResult.labelKey } : {}),
                         manifest_key: `${wCfg.prefixBase}/${job.slideId}/manifest.json`,
                         tiles_prefix: s3Prefix,
                         low_tiles_prefix: `${wCfg.prefixBase}/${job.slideId}/tiles/`,
@@ -640,6 +697,8 @@ async function processJob(job) {
 
         // Phase 1: Generate BigTIFF
         console.log(`[BIGTIFF] Starting pipeline for ${job.slideId.substring(0, 12)} (mode: bigtiff_iiif)`);
+        // Slides processed before label support get their photo copied here (reprocess)
+        await copyLabelFromDsmeta(job.slideId, job.rawPath);
         const genResult = await generateBigTIFF(job.slideId, job.rawPath);
 
         await updateSlide(job.slideId, { bigtiff_size: genResult.size });
@@ -680,28 +739,24 @@ async function processJob(job) {
           );
           const s = slideData.rows[0];
           if (s) {
-            if (!(await canEmitRegistered(getPool(), job.slideId))) {
-              console.log(`[Sync] Skipping SlideRegistered for ${job.slideId.substring(0, 12)} (not confirmed)`);
-            } else {
-              await getPool().query(
-                `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-                 VALUES ($1, $2, $3, $4)`,
-                ['slide', job.slideId, 'registered', JSON.stringify({
-                  slide_id: job.slideId,
-                  case_id: null,
-                  svs_filename: s.original_filename,
-                  width: s.width || 0,
-                  height: s.height || 0,
-                  mpp: parseFloat(s.mpp) || 0,
-                  external_case_id: s.external_case_id || null,
-                  external_case_base: s.external_case_base || null,
-                  external_slide_label: s.external_slide_label || null,
-                  pipeline_mode: 'bigtiff_iiif',
-                  name_confirmed: isNameConfirmed(s.review_status),
-                })]
-              );
-              console.log(`[BIGTIFF] SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
-            }
+            await getPool().query(
+              `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+               VALUES ($1, $2, $3, $4)`,
+              ['slide', job.slideId, 'registered', JSON.stringify({
+                slide_id: job.slideId,
+                case_id: null,
+                svs_filename: s.original_filename,
+                width: s.width || 0,
+                height: s.height || 0,
+                mpp: parseFloat(s.mpp) || 0,
+                external_case_id: s.external_case_id || null,
+                external_case_base: s.external_case_base || null,
+                external_slide_label: s.external_slide_label || null,
+                pipeline_mode: 'bigtiff_iiif',
+                name_confirmed: isNameConfirmed(s.review_status),
+              })]
+            );
+            console.log(`[BIGTIFF] SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
           }
         } catch (outboxErr) {
           console.error(`[BIGTIFF] Failed to emit SlideRegistered (non-fatal): ${outboxErr.message}`);
@@ -733,6 +788,7 @@ async function processJob(job) {
                 wasabi_endpoint: wCfg.endpoint,
                 wasabi_prefix: s3Prefix,
                 thumb_key: `${s3Prefix}thumb.jpg`,
+                ...(uploadResult.labelKey ? { label_key: uploadResult.labelKey } : {}),
                 manifest_key: `${s3Prefix}manifest.json`,
                 tiles_prefix: s3Prefix,
                 low_tiles_prefix: s3Prefix,
@@ -907,7 +963,7 @@ async function retryFailedTilegen() {
 
 async function worker() {
   console.log('SuperNavi Processor Worker starting...');
-  console.log(`Version: ${PKG_VERSION} — review gate ACTIVE (SlideRegistered only for confirmed/legacy slides)`);
+  console.log(`Version: ${PKG_VERSION} — SlideRegistered always emitted; name_confirmed follows review_status`);
   console.log(`WSI formats (OpenSlide): ${WSI_FORMATS.join(', ')}`);
   console.log(`Pipeline mode: ${PIPELINE_MODE}`);
   if (PIPELINE_MODE === 'bigtiff_iiif') {
@@ -954,6 +1010,12 @@ async function worker() {
       if (!result) continue;
 
       const job = JSON.parse(result.element);
+
+      if (job.type === 'LABEL_PUBLISH') {
+        // Backfill of the label photo for an existing slide: no slide status changes
+        await processLabelPublish(job);
+        continue;
+      }
 
       // BIGTIFF jobs run in parallel (up to calculated slots)
       if (job.type === 'BIGTIFF') {

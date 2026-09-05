@@ -1,5 +1,3 @@
-import { isReviewQueueEnabled } from '../lib/feature-flags.js';
-
 export default async function capabilitiesRoutes(fastify) {
   fastify.get('/capabilities', async () => {
     return {
@@ -8,7 +6,8 @@ export default async function capabilitiesRoutes(fastify) {
         tiles: true,
         annotations: true,
         sync: true,
-        review_queue: isReviewQueueEnabled(),
+        // Names come from OCR and are confirmed by a person in the dashboard queue
+        review_queue: true,
       },
       formats: {
         supported: ['svs', 'ndpi', 'tiff', 'mrxs'],

@@ -7,11 +7,13 @@
  * S3 key structure:
  *   slides/{slideId}/slide.tif    — pyramidal BigTIFF
  *   slides/{slideId}/thumb.jpg    — thumbnail
+ *   slides/{slideId}/label.jpg    — label photo (only when the scanner produced one)
  */
 
 import { open, readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
+import { uploadLabelPhoto } from './label-publisher.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const CLOUD_API_URL = getCloudApiUrl();
@@ -248,6 +250,9 @@ export async function uploadBigTIFF(slideId, bigtiffPath, slideMetadata) {
     console.warn(`[BIGTIFF-UPLOAD] Thumb upload failed (non-fatal): ${err.message}`);
   }
 
+  // Step 6b: Upload the label photo when the slide has one (non-fatal)
+  const labelKey = await uploadLabelPhoto(slideId, s3Prefix);
+
   // Step 7: Notify cloud that BigTIFF is ready
   const readyRes = await fetchWithRetry(`${CLOUD_API_URL}/edge/slides/${slideId}/ready`, {
     method: 'POST',
@@ -269,6 +274,7 @@ export async function uploadBigTIFF(slideId, bigtiffPath, slideMetadata) {
     status: 'READY',
     s3Prefix,
     bigtiffKey,
+    labelKey,
     bigtiffSize: fileSize,
     elapsed,
   };

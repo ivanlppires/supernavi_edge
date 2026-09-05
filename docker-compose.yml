@@ -32,11 +32,11 @@ services:
       SCANNER_DIR: /scanner
       SCANNER_INTERVAL_MS: ${SCANNER_INTERVAL_MS:-120000}
       GOOGLE_GENAI_API_KEY: ${GOOGLE_GENAI_API_KEY:-}
-      OCR_MODEL: ${OCR_MODEL:-gemini-2.5-flash}
-      OCR_MAX_OUTPUT_TOKENS: ${OCR_MAX_OUTPUT_TOKENS:-1024}
-      OCR_THINKING_BUDGET: ${OCR_THINKING_BUDGET:-0}
+      # Label OCR: Gemini 3 Pro line via @google/genai (thinking level, not budget)
+      OCR_MODEL: ${OCR_MODEL:-gemini-3.1-pro-preview}
+      OCR_MAX_OUTPUT_TOKENS: ${OCR_MAX_OUTPUT_TOKENS:-256}
+      OCR_THINKING_LEVEL: ${OCR_THINKING_LEVEL:-LOW}
       LABEL_OCR_ENABLED: ${LABEL_OCR_ENABLED:-true}
-      EDGE_REVIEW_QUEUE: ${EDGE_REVIEW_QUEUE:-false}
     depends_on:
       db:
         condition: service_healthy

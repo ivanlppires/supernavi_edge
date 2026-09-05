@@ -1,69 +1,34 @@
 /**
- * Label OCR via Gemini Vision API.
+ * Label OCR via Gemini (Google Gen AI SDK, Gemini 3 family).
  *
- * Single-attempt: sends slide2.jpg (full slide overview, code visible at top)
- * to Gemini and extracts the case identifier. Returns null on UNREADABLE,
- * missing slide2.jpg, or parse failure — the technician confirms or overrides
- * the result via the review queue.
+ * Single attempt per slide: sends slide2.jpg (photo of the whole slide, the
+ * handwritten case number sits on the label at the top) and asks for the
+ * identifier only. The answer is never trusted blindly:
+ *   - finishReason other than STOP (truncated/blocked) → no name
+ *   - UNREADABLE / empty → no name
+ *   - anything the shared parser rejects (abbreviated form needs 3+ digits) → no name
+ *   - callers additionally drop implausibly low case numbers (case-plausibility.js)
+ * A slide without a proposal still uploads; it just waits in the review queue
+ * with review_status='pending' (cloud keeps it out of PathoWeb until confirmed).
  *
- * Labels contain:
- *   - Printed text: case number (e.g., AP26000388 or IM26000100)
- *   - Handwritten text: flask/slide suffix (e.g., A1, B, A2)
- *
- * Prefixes:
- *   AP = Anatomopatológico
- *   PA = Patologia Anatômica (alias for AP)
- *   C  = Citologia
- *   IM = Imuno-histoquímico
- *
- * Pattern: [AP|PA|C|IM][6-12 digits][letter][optional digit(s)]
+ * Model and reasoning are configured by env:
+ *   OCR_MODEL            default gemini-3.1-pro-preview (the Gemini 3 Pro line)
+ *   OCR_THINKING_LEVEL   MINIMAL | LOW | MEDIUM | HIGH ("" = let the model decide); default LOW
+ *   OCR_MAX_OUTPUT_TOKENS default 256 — the answer is a short identifier
+ *   GOOGLE_GENAI_API_KEY, LABEL_OCR_ENABLED (see isOcrEnabled)
  */
 
 import { readFile, access } from 'fs/promises';
 import { join } from 'path';
 import { constants } from 'fs';
+import { parseSlideName } from './slide-name-parser.js';
 
-const OCR_MODEL = process.env.OCR_MODEL || 'gemini-2.5-flash';
-// Gemini 2.5 models "think" before answering and those hidden tokens count
-// against maxOutputTokens. With a tiny budget the visible answer can be cut
-// mid-identifier ("26-2" instead of "26-2614A"), which the parser then expands
-// to a real-looking but wrong case (AP26000002). So: generous budget, thinking
-// disabled (best-effort, see callVision), and MAX_TOKENS treated as unreadable.
-const OCR_MAX_OUTPUT_TOKENS = parseInt(process.env.OCR_MAX_OUTPUT_TOKENS || '1024', 10);
-const OCR_THINKING_BUDGET = process.env.OCR_THINKING_BUDGET === undefined || process.env.OCR_THINKING_BUDGET === ''
-  ? 0
-  : parseInt(process.env.OCR_THINKING_BUDGET, 10);
+export const DEFAULT_OCR_MODEL = 'gemini-3.1-pro-preview';
+const DEFAULT_MAX_OUTPUT_TOKENS = 256;
+const DEFAULT_THINKING_LEVEL = 'LOW';
 
-const OCR_RESPONSE_REGEX = /^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i;
-
-// Abbreviated format: digits[-_]digits + optional suffix (e.g., 26_388A, 96-621)
-// The separator (underscore or hyphen) replaces suppressed zeros: 26_388 → 26000388
-const ABBREVIATED_REGEX = /^(\d{2})[-_](\d{1,6})([A-Z]\d*)?$/i;
-
-// Common handwritten digit misreads: 2↔9 (curved 2 looks like 9)
-const DIGIT_CORRECTIONS = { '9': '2', '2': '9' };
-
-/**
- * Correct the year part of abbreviated format when it's outside a plausible range.
- * Pathology slides use YY (2-digit year). Valid range: 20–current year.
- * If the OCR'd year is implausible, try common digit substitutions.
- */
-function correctYear(yearStr) {
-  const currentYear = new Date().getFullYear() % 100; // e.g., 26
-  const year = parseInt(yearStr, 10);
-  if (year >= 20 && year <= currentYear) return yearStr;
-
-  // Try correcting each digit with common misreads
-  for (let i = 0; i < yearStr.length; i++) {
-    const replacement = DIGIT_CORRECTIONS[yearStr[i]];
-    if (!replacement) continue;
-    const candidate = yearStr.substring(0, i) + replacement + yearStr.substring(i + 1);
-    const candidateYear = parseInt(candidate, 10);
-    if (candidateYear >= 20 && candidateYear <= currentYear) return candidate;
-  }
-
-  return yearStr; // no correction found, keep original
-}
+/** Same parser as manual naming — one set of rules for every source. */
+export const parseOcrResponse = parseSlideName;
 
 let client = null;
 
@@ -71,54 +36,10 @@ async function getClient() {
   if (!client) {
     const apiKey = process.env.GOOGLE_GENAI_API_KEY;
     if (!apiKey) throw new Error('GOOGLE_GENAI_API_KEY not set');
-    const { GoogleGenerativeAI } = await import('@google/generative-ai');
-    client = new GoogleGenerativeAI(apiKey);
+    const { GoogleGenAI } = await import('@google/genai');
+    client = new GoogleGenAI({ apiKey });
   }
   return client;
-}
-
-/**
- * Parse the raw OCR text response into structured data.
- * Exported for testing.
- *
- * @param {string|null} text - Raw text from OCR
- * @returns {{ fullName: string, caseBase: string, slideLabel: string } | null}
- */
-export function parseOcrResponse(text) {
-  if (!text || typeof text !== 'string') return null;
-
-  const trimmed = text.trim().toUpperCase();
-  if (!trimmed) return null;
-
-  // First try abbreviated format: 26_388A → AP26000388A
-  // Lab convention: underscore replaces suppressed zeros, default prefix is AP
-  const abbrMatch = trimmed.match(ABBREVIATED_REGEX);
-  if (abbrMatch) {
-    const prefix = 'AP'; // default to AP unless explicitly IM
-    const left = correctYear(abbrMatch[1]);        // e.g., "96" → "26"
-    const right = abbrMatch[2];                    // e.g., "388"
-    const suffix = (abbrMatch[3] || '').toUpperCase(); // e.g., "A"
-    // Pad with zeros between left and right to reach 8 digits total
-    const totalDigits = 8;
-    const zerosNeeded = totalDigits - left.length - right.length;
-    const caseBase = prefix + left + '0'.repeat(Math.max(0, zerosNeeded)) + right;
-    const fullName = caseBase + suffix;
-    return { fullName, caseBase, slideLabel: suffix };
-  }
-
-  // Standard format: AP26000388A1 or IM26000100B2
-  const cleaned = trimmed.replace(/[\s\-_.]/g, '');
-  if (!cleaned) return null;
-
-  const match = cleaned.match(OCR_RESPONSE_REGEX);
-  if (!match) return null;
-
-  // Normalize PA → AP (same department, different label convention)
-  const caseBase = match[1].replace(/^PA/, 'AP');
-  const slideLabel = match[2] || '';
-  const fullName = caseBase + slideLabel;
-
-  return { fullName, caseBase, slideLabel };
 }
 
 const SLIDE_OVERVIEW_PROMPT = `This is a photo of an entire pathology slide. The case identifier is usually HANDWRITTEN on the TOP PORTION of the slide (the label area).
@@ -153,57 +74,53 @@ async function readImage(imagePath) {
   };
 }
 
-function buildGenerationConfig(withThinkingConfig) {
-  const cfg = { maxOutputTokens: OCR_MAX_OUTPUT_TOKENS, temperature: 0 };
-  if (withThinkingConfig && Number.isFinite(OCR_THINKING_BUDGET) && OCR_THINKING_BUDGET >= 0) {
-    // Not typed by the (deprecated) SDK but forwarded verbatim to the v1beta API.
-    cfg.thinkingConfig = { thinkingBudget: OCR_THINKING_BUDGET };
-  }
-  return cfg;
+/**
+ * Build the generateContent request. Pure; exported for testing.
+ * @param {{ mediaType: string, base64: string }[]} images
+ * @param {string} prompt
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+export function buildRequest(images, prompt, env = process.env) {
+  const model = env.OCR_MODEL || DEFAULT_OCR_MODEL;
+  const maxOutputTokens = parseInt(env.OCR_MAX_OUTPUT_TOKENS || String(DEFAULT_MAX_OUTPUT_TOKENS), 10);
+  const levelRaw = env.OCR_THINKING_LEVEL === undefined ? DEFAULT_THINKING_LEVEL : env.OCR_THINKING_LEVEL;
+  const thinkingLevel = String(levelRaw || '').trim().toUpperCase();
+
+  const config = {
+    temperature: 0,
+    maxOutputTokens: Number.isFinite(maxOutputTokens) && maxOutputTokens > 0 ? maxOutputTokens : DEFAULT_MAX_OUTPUT_TOKENS,
+    ...(thinkingLevel ? { thinkingConfig: { thinkingLevel } } : {}),
+  };
+
+  return {
+    model,
+    contents: [{
+      role: 'user',
+      parts: [
+        ...images.map(img => ({ inlineData: { mimeType: img.mediaType, data: img.base64 } })),
+        { text: prompt },
+      ],
+    }],
+    config,
+  };
 }
 
 /**
- * Call Gemini Vision with one or more images and a prompt.
+ * Call Gemini with one or more images and a prompt.
  * Returns the raw text plus the candidate's finishReason so callers can tell a
  * complete answer (STOP) from a truncated one (MAX_TOKENS).
  */
 async function callVision(images, prompt) {
-  const parts = [
-    ...images.map(img => ({
-      inlineData: { mimeType: img.mediaType, data: img.base64 },
-    })),
-    { text: prompt },
-  ];
-
-  const genai = await getClient();
-  const attempt = async (withThinkingConfig) => {
-    const model = genai.getGenerativeModel({
-      model: OCR_MODEL,
-      generationConfig: buildGenerationConfig(withThinkingConfig),
-    });
-    const result = await model.generateContent({ contents: [{ role: 'user', parts }] });
-    const candidate = result.response?.candidates?.[0];
-    let text = '';
-    try {
-      text = result.response.text() || '';
-    } catch {
-      text = ''; // blocked / empty candidate — treated as unreadable by the caller
-    }
-    return { text, finishReason: candidate?.finishReason || null };
-  };
-
-  const wantsThinkingConfig = Number.isFinite(OCR_THINKING_BUDGET) && OCR_THINKING_BUDGET >= 0;
+  const ai = await getClient();
+  const response = await ai.models.generateContent(buildRequest(images, prompt));
+  const candidate = response?.candidates?.[0];
+  let text = '';
   try {
-    return await attempt(wantsThinkingConfig);
-  } catch (err) {
-    // Older API surfaces / models may reject thinkingConfig — degrade gracefully
-    // instead of losing OCR entirely.
-    if (wantsThinkingConfig && /thinking|INVALID_ARGUMENT|\b400\b/i.test(err?.message || '')) {
-      console.warn(`[OCR] thinkingConfig rejected by API, retrying without it: ${err.message}`);
-      return attempt(false);
-    }
-    throw err;
+    text = response?.text || '';
+  } catch {
+    text = ''; // blocked / empty candidate — treated as unreadable by the caller
   }
+  return { text, finishReason: candidate?.finishReason || null };
 }
 
 /**
@@ -217,25 +134,21 @@ export function interpretOcrResponse({ text, finishReason }) {
   const reason = finishReason || null;
 
   if (reason && reason !== 'STOP' && reason !== 'FINISH_REASON_UNSPECIFIED') {
-    // MAX_TOKENS = the identifier was cut off. A partial identifier like "26-2"
-    // still parses (→ AP26000002) and is worse than no answer: never trust it.
+    // MAX_TOKENS = the identifier was cut off. A partial identifier is worse
+    // than no answer (incident 2026-09-04): never trust it.
     return { status: reason === 'MAX_TOKENS' ? 'truncated' : 'blocked', raw, finishReason: reason, result: null };
   }
   if (!raw || raw.toUpperCase() === 'UNREADABLE') {
     return { status: 'unreadable', raw, finishReason: reason, result: null };
   }
-  const result = parseOcrResponse(raw);
+  const result = parseSlideName(raw);
   if (!result) return { status: 'unparsed', raw, finishReason: reason, result: null };
   return { status: 'ok', raw, finishReason: reason, result };
 }
 
 /**
  * OCR a slide's label from its .dsmeta directory.
- * Single-attempt: tries slide2.jpg (full slide with the code on top).
- * Returns null on UNREADABLE / missing slide2 / parse failure.
- * The technician confirms or overrides the result via the review queue.
- *
- * @param {string} dsmetaDir - Path to the .dsmeta directory
+ * @param {string} dsmetaDir
  * @returns {Promise<{ fullName: string, caseBase: string, slideLabel: string } | null>}
  */
 export async function ocrLabel(dsmetaDir) {
@@ -246,8 +159,7 @@ export async function ocrLabel(dsmetaDir) {
 /**
  * Same as ocrLabel() but returns the full decision (status, raw text,
  * finishReason) so callers can record WHY no name was proposed.
- *
- * @param {string} dsmetaDir - Path to the .dsmeta directory
+ * @param {string} dsmetaDir
  * @returns {Promise<{ status: string, raw: string|null, finishReason: string|null, result: object|null }>}
  */
 export async function ocrLabelDetailed(dsmetaDir) {

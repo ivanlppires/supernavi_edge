@@ -91,6 +91,10 @@ docker compose exec redis redis-cli LRANGE supernavi:jobs 0 -1
 | `GET /v1/slides/:id` | Slide details |
 | `GET /v1/slides/:id/manifest` | DZI manifest |
 | `GET /v1/slides/:id/thumb` | Thumbnail |
+| `GET /v1/slides/:id/label` | Label photo (Motic `.dsmeta/label.jpg`) |
+| `GET /v1/slides/:id/slide2` | Whole-slide photo (Motic `.dsmeta/slide2.jpg`) |
+| `POST /v1/slides/:id/rename` | Person names the slide (validated; confirms and re-emits SlideRegistered) |
+| `GET/POST /v1/pending-slides…` | Review queue: OCR readings waiting for a person (`confirm`, `confirm-all`, `rescan`) |
 | `GET /v1/slides/:id/tiles/:z/:x/:y.jpg` | Tile (on-demand for WSI) |
 | `GET /v1/slides/:id/availability` | Tile readiness status |
 
@@ -161,6 +165,7 @@ annotations, threads -- Per-slide collaboration
 - API exposed only on 127.0.0.1 (localhost)
 - API contract is identical for all formats (viewer doesn't know the source)
 - Never implement LIS/laudo logic (visualization tool only)
+- Slide names: OCR proposes, a person confirms; an unconfirmed name never reaches a PathoWeb case (incident 2026-09-04)
 - Node.js 20+, ES Modules (`"type": "module"`)
 
 ## Testing

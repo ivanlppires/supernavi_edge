@@ -18,8 +18,8 @@ import { readdir, access } from 'fs/promises';
 import { join, extname } from 'path';
 import { constants } from 'fs';
 import { hashFile } from '../lib/hash.js';
-import { parseDsmeta, parseMoticPath } from '../lib/dsmeta-parser.js';
-import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides, deduplicateSlideLabel, setSlideReviewStatus, getRecentMaxCaseBase } from '../db/slides.js';
+import { parseDsmeta, parseMoticPath, findDsmetaDir } from '../lib/dsmeta-parser.js';
+import { createSlide, createJob, updateSlide, updateSlideOcr, deduplicateSlideLabel, setSlideReviewStatus, countPendingReviewSlides, getRecentMaxCaseBase } from '../db/slides.js';
 import { query } from '../db/index.js';
 import { ocrLabelDetailed, isOcrEnabled } from '../lib/label-ocr.js';
 import { isImplausiblyLowCaseNumber, parseCaseBase } from '../lib/case-plausibility.js';
@@ -28,7 +28,6 @@ import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { scannerFileExists, insertScannerFile, getAllScannerFilePaths } from '../db/scanner.js';
 import { enqueueJob } from '../lib/queue.js';
 import { eventBus } from './events.js';
-import { isReviewQueueEnabled } from '../lib/feature-flags.js';
 
 const WSI_EXTENSIONS = new Set(['.svs', '.ndpi', '.tif', '.tiff', '.mrxs']);
 
@@ -92,7 +91,9 @@ async function processNewFile(filePath) {
 
   let effectiveFilename = filename;
   let ocrStatus = null;
-  let dsmetaPath = null;
+  // Motic writes `<file>.svs.dsmeta/` (label.jpg + slide2.jpg) next to the SVS.
+  // Persist the path whenever it exists so the label photo is always available.
+  const dsmetaPath = await findDsmetaDir(filePath);
   let externalFields = null;
   // slide_pipeline_events has a FK to slides — OCR runs before createSlide, so
   // buffer the observability entries and flush them once the row exists.
@@ -118,7 +119,6 @@ async function processNewFile(filePath) {
   if (!externalFields && isOcrEnabled()) {
     try {
       await access(dsmetaDir, constants.R_OK);
-      dsmetaPath = dsmetaDir;
 
       console.log(`[Scanner] OCR: found dsmeta at ${dsmetaDir}`);
       const ocr = await ocrLabelDetailed(dsmetaDir);
@@ -166,7 +166,6 @@ async function processNewFile(filePath) {
       } else {
         console.error(`[Scanner] OCR error for ${filename}: ${err.message}`);
         ocrStatus = 'pending';
-        dsmetaPath = dsmetaDir;
       }
     }
   }
@@ -183,15 +182,15 @@ async function processNewFile(filePath) {
     await pipelineLog(slideId, stage, level, message, details);
   }
 
-  if (isReviewQueueEnabled()) {
-    // Every new slide starts as pending review (technician confirms name +
-    // context). Legacy ocrStatus stays for backward compat in the schema.
-    await setSlideReviewStatus(slideId, 'pending');
-
+  // Review state: a name typed by a person in the filename is trusted; an OCR
+  // proposal (or no name at all) waits for a person in the review queue. The
+  // slide is processed and uploaded either way — the cloud simply keeps
+  // unconfirmed names out of PathoWeb until someone confirms.
+  const reviewStatus = parsed ? 'confirmed' : 'pending';
+  await setSlideReviewStatus(slideId, reviewStatus);
+  if (reviewStatus === 'pending') {
     try {
-      const { countPendingReviewSlides } = await import('../db/slides.js');
-      const n = await countPendingReviewSlides();
-      eventBus.emitPendingCountChanged(n);
+      eventBus.emitPendingCountChanged(await countPendingReviewSlides());
     } catch (err) {
       console.warn(`[Scanner] Failed to broadcast pending count: ${err.message}`);
     }
