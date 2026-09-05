@@ -17,11 +17,6 @@
         <circle cx="12" cy="12" r="3"/>
       </svg>
       <h1 class="header-title">SuperNavi Edge</h1>
-      <div id="pendingBadge" class="pending-badge hidden" role="button" tabindex="0" title="Aguardando confirmação">
-        <span class="pending-badge__icon">&#9679;</span>
-        <span class="pending-badge__count" id="pendingCount">0</span>
-        <span class="pending-badge__label">aguardando</span>
-      </div>
     </div>
     <div class="header-status" id="connectionStatus">
       <span class="status-dot disconnected" id="connectionDot"></span>
@@ -333,11 +328,11 @@
 
   </main>
 
-  <!-- OCR Review Modal -->
+  <!-- Identify slide: label/slide photos + name form (element ids kept from the old OCR modal) -->
   <div class="ocr-modal-overlay" id="ocrModal">
     <div class="ocr-modal">
       <div class="ocr-modal-header">
-        <h2 class="ocr-modal-title">Verifica&ccedil;&atilde;o OCR</h2>
+        <h2 class="ocr-modal-title">Identificar l&acirc;mina</h2>
         <div class="ocr-nav">
           <button class="ocr-nav-btn" id="ocrPrev" aria-label="Anterior">&#9664;</button>
           <span class="ocr-nav-counter" id="ocrNavCounter">1 / 1</span>
@@ -346,36 +341,28 @@
         <button class="ocr-modal-close" id="ocrModalClose" aria-label="Fechar">&times;</button>
       </div>
       <div class="ocr-modal-columns">
-        <!-- Left column: images -->
+        <!-- Left column: photos written by the scanner (.dsmeta) -->
         <div class="ocr-col-left">
           <div class="ocr-tabs">
             <button class="ocr-tab active" data-tab="slide2">L&acirc;mina</button>
-            <button class="ocr-tab" data-tab="label">Label</button>
+            <button class="ocr-tab" data-tab="label">Etiqueta</button>
           </div>
           <div class="ocr-label-container">
-            <img class="ocr-label-image" id="ocrSlide2Image" alt="Vis&atilde;o geral da l&acirc;mina">
-            <img class="ocr-label-image" id="ocrLabelImage" alt="Label da l&acirc;mina" style="display:none">
+            <img class="ocr-label-image" id="ocrSlide2Image" alt="Foto da l&acirc;mina inteira">
+            <img class="ocr-label-image" id="ocrLabelImage" alt="Foto da etiqueta" style="display:none">
             <div class="ocr-label-placeholder" id="ocrLabelPlaceholder" style="display:none">Imagem n&atilde;o dispon&iacute;vel</div>
           </div>
         </div>
-        <!-- Right column: info + actions -->
+        <!-- Right column: current file + name form -->
         <div class="ocr-col-right">
           <div class="ocr-info">
-            <div class="ocr-info-row">
-              <span class="ocr-info-label">Leitura OCR</span>
-              <span class="ocr-info-value" id="ocrReading">--</span>
-            </div>
             <div class="ocr-info-row">
               <span class="ocr-info-label">Arquivo</span>
               <span class="ocr-info-value ocr-filename-value" id="ocrFilename">--</span>
             </div>
-            <div class="ocr-info-row">
-              <span class="ocr-info-label">Status</span>
-              <span class="ocr-info-value" id="ocrStatusValue">--</span>
-            </div>
           </div>
           <div class="ocr-manual-edit">
-            <label class="ocr-manual-label">Corrigir manualmente:</label>
+            <label class="ocr-manual-label" for="ocrManualInput">Nome da l&acirc;mina (leia na etiqueta):</label>
             <div class="ocr-manual-input-row">
               <input type="text" class="ocr-manual-input" id="ocrManualInput" placeholder="AP26000388A1 ou 26-388A" autocomplete="off" spellcheck="false">
               <button class="btn-manual-save" id="btnManualSave" disabled title="Salvar">&#10003;</button>
@@ -384,54 +371,8 @@
           </div>
           <div class="ocr-status-msg" id="ocrStatusMsg"></div>
           <div class="ocr-modal-footer">
-            <button class="btn-reocr" id="btnReocr">Re-ler OCR</button>
             <button class="btn-close-modal" id="btnCloseOcr">Fechar</button>
           </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Review queue: notification panel (position: fixed, layout-independent) -->
-  <div id="pendingPanel" class="pending-panel hidden" role="dialog" aria-label="Lâminas aguardando">
-    <div class="pending-panel__header">
-      <span>Aguardando &middot; <span id="pendingPanelCount">0</span></span>
-      <button type="button" id="pendingPanelClose" aria-label="Fechar">&times;</button>
-    </div>
-    <ul id="pendingPanelList" class="pending-panel__list"></ul>
-    <button type="button" id="pendingPanelOpenAll" class="pending-panel__open">Abrir fila completa</button>
-  </div>
-
-  <!-- Review queue: review modal (Task 13+14) -->
-  <div id="reviewModal" class="review-modal hidden" role="dialog" aria-modal="true">
-    <div class="review-modal__backdrop"></div>
-    <div class="review-modal__panel">
-      <header class="review-modal__header">
-        <span id="reviewModalTitle">Revisar lâmina</span>
-        <button type="button" id="reviewModalClose" aria-label="Fechar">×</button>
-      </header>
-      <div class="review-modal__body">
-        <div class="review-modal__image">
-          <div class="review-modal__image-toggle">
-            <button type="button" data-which="label" class="active">label.jpg</button>
-            <button type="button" data-which="slide2">slide2.jpg</button>
-          </div>
-          <img id="reviewImage" alt="Lâmina">
-          <div id="reviewImageEmpty" class="review-modal__image-empty hidden">Imagem indisponível</div>
-        </div>
-        <div class="review-modal__form">
-          <label class="review-field">
-            <span>Nome da lâmina</span>
-            <input type="text" id="reviewFilename" autocomplete="off" spellcheck="false">
-            <small id="reviewFilenameHint">Sugestão IA</small>
-            <small id="reviewFilenameError" class="error hidden"></small>
-          </label>
-          <div id="reviewContextSection"></div>
-          <footer class="review-modal__actions">
-            <button type="button" id="reviewRescan" class="secondary">Marcar para rescanear</button>
-            <div class="spacer"></div>
-            <button type="button" id="reviewConfirm" class="primary" disabled>Confirmar e próxima</button>
-          </footer>
         </div>
       </div>
     </div>
