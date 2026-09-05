@@ -13,7 +13,7 @@
 import { open, readFile, stat } from 'fs/promises';
 import { join } from 'path';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
-import { findLabelPath } from './lib/label-asset.js';
+import { uploadLabelPhoto } from './label-publisher.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const CLOUD_API_URL = getCloudApiUrl();
@@ -251,41 +251,7 @@ export async function uploadBigTIFF(slideId, bigtiffPath, slideMetadata) {
   }
 
   // Step 6b: Upload the label photo when the slide has one (non-fatal)
-  let labelKey = null;
-  const labelPath = await findLabelPath(slideId);
-  if (labelPath) {
-    const candidateKey = `${s3Prefix}label.jpg`;
-    try {
-      const labelData = await readFile(labelPath);
-      const urlRes = await fetchWithRetry(`${CLOUD_API_URL}/edge/upload-urls`, {
-        method: 'POST',
-        headers: cloudHeaders(),
-        body: JSON.stringify({
-          slideId,
-          items: [{ key: candidateKey, contentType: 'image/jpeg' }],
-        }),
-      });
-      if (urlRes.ok) {
-        const { putUrls } = await urlRes.json();
-        const putRes = await fetch(putUrls[candidateKey], {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'image/jpeg',
-            'Cache-Control': 'private, max-age=86400',
-          },
-          body: labelData,
-        });
-        if (putRes.ok) {
-          labelKey = candidateKey;
-          console.log(`[BIGTIFF-UPLOAD] Label photo uploaded: ${candidateKey}`);
-        } else {
-          console.warn(`[BIGTIFF-UPLOAD] Label PUT failed (non-fatal): ${putRes.status}`);
-        }
-      }
-    } catch (err) {
-      console.warn(`[BIGTIFF-UPLOAD] Label upload failed (non-fatal): ${err.message}`);
-    }
-  }
+  const labelKey = await uploadLabelPhoto(slideId, s3Prefix);
 
   // Step 7: Notify cloud that BigTIFF is ready
   const readyRes = await fetchWithRetry(`${CLOUD_API_URL}/edge/slides/${slideId}/ready`, {

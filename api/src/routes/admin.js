@@ -189,4 +189,55 @@ export default async function adminRoutes(fastify) {
       message: `Preview republish queued for ${slides.length} slide(s)`,
     };
   });
+
+  // POST /v1/admin/slides/:slideId/publish-label — send this slide's label photo to the cloud
+  fastify.post('/admin/slides/:slideId/publish-label', async (request, reply) => {
+    const { slideId } = request.params;
+    let slide;
+    try {
+      const result = await getPool().query(
+        'SELECT id, original_filename, raw_path, dsmeta_path FROM slides WHERE id = $1', [slideId]);
+      slide = result.rows[0];
+    } catch {
+      return reply.status(500).send({ error: 'Database query failed' });
+    }
+    if (!slide) return reply.status(404).send({ error: 'Slide not found' });
+    if (!slide.dsmeta_path) return reply.status(400).send({ error: 'Slide has no .dsmeta folder (no label photo)' });
+
+    await enqueueJob({ type: 'LABEL_PUBLISH', slideId, rawPath: slide.raw_path });
+    return { success: true, slideId, filename: slide.original_filename, message: 'Label publish queued' };
+  });
+
+  // POST /v1/admin/slides/publish-all-labels — backfill: send the label photo of every
+  // uploaded BigTIFF slide that has a .dsmeta folder (slides processed before label support)
+  fastify.post('/admin/slides/publish-all-labels', async (request, reply) => {
+    let slides;
+    try {
+      const result = await getPool().query(
+        `SELECT id, original_filename, raw_path FROM slides
+          WHERE dsmeta_path IS NOT NULL
+            AND pipeline_mode = 'bigtiff_iiif'
+            AND cloud_upload_status = 'done'
+          ORDER BY created_at`,
+      );
+      slides = result.rows;
+    } catch {
+      return reply.status(500).send({ error: 'Database query failed' });
+    }
+
+    if (slides.length === 0) {
+      return reply.send({ success: true, queued: 0, message: 'No uploaded slides with a label photo found' });
+    }
+
+    for (const slide of slides) {
+      await enqueueJob({ type: 'LABEL_PUBLISH', slideId: slide.id, rawPath: slide.raw_path });
+    }
+
+    return {
+      success: true,
+      queued: slides.length,
+      slides: slides.map(s => ({ slideId: s.id, filename: s.original_filename })),
+      message: `Label publish queued for ${slides.length} slide(s)`,
+    };
+  });
 }

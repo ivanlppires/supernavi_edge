@@ -514,6 +514,11 @@ Wasabi ao lado de `thumb.jpg` e anunciada em `preview/published` como
 `label_key`. O viewer mostra a foto na aba Info. Servida localmente por
 `GET /v1/slides/:id/label`.
 
+Lâminas enviadas à nuvem antes desta versão: Configurações → Manutenção →
+**Publicar Etiquetas** (ou `POST /v1/admin/slides/publish-all-labels`). Cada
+lâmina BigTIFF com `.dsmeta` vira um job `LABEL_PUBLISH` que copia a foto,
+envia ao lado do `thumb.jpg` e reemite `preview/published` com `label_key`.
+
 ## Testes
 
 ```bash

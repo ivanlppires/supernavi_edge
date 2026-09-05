@@ -13,6 +13,7 @@ import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 import { pipelineLog } from './lib/pipeline-log.js';
 import { copyLabelFromDsmeta } from './lib/label-asset.js';
+import { uploadLabelPhoto, bigtiffPrefix, buildBigtiffPublishedPayload } from './label-publisher.js';
 import { readFileSync } from 'fs';
 
 const PKG_VERSION = (() => {
@@ -168,6 +169,60 @@ async function processP1(job) {
     return processSVS_P1(job);
   } else {
     return processImageP1(job);
+  }
+}
+
+/**
+ * LABEL_PUBLISH: send the Motic label photo of an already-uploaded BigTIFF slide
+ * to the cloud (backfill for slides processed before label support). Copies the
+ * photo from .dsmeta if needed, uploads it next to thumb.jpg and re-emits
+ * preview/published with label_key. Never touches slides.status.
+ */
+async function processLabelPublish(job) {
+  const slideId = job.slideId;
+  const tag = `[LABEL] ${slideId.substring(0, 12)}`;
+  try {
+    const r = await getPool().query(
+      `SELECT id, raw_path, pipeline_mode, s3_bigtiff_key, bigtiff_size, cloud_upload_status,
+              width, height, max_level, external_case_id, external_case_base, external_slide_label
+         FROM slides WHERE id = $1`,
+      [slideId]
+    );
+    const slide = r.rows[0];
+    if (!slide) {
+      console.warn(`${tag} slide not found`);
+      return;
+    }
+    if (slide.pipeline_mode !== 'bigtiff_iiif' || !slide.s3_bigtiff_key || slide.cloud_upload_status !== 'done') {
+      await logEvent(slideId, 'preview', 'info', 'Label publish skipped: slide is not an uploaded BigTIFF slide');
+      return;
+    }
+
+    const labelPath = await copyLabelFromDsmeta(slideId, slide.raw_path);
+    if (!labelPath) {
+      await logEvent(slideId, 'preview', 'info', 'No label photo for this slide (.dsmeta/label.jpg not found)');
+      return;
+    }
+
+    const s3Prefix = bigtiffPrefix(slide.s3_bigtiff_key);
+    const labelKey = await uploadLabelPhoto(slideId, s3Prefix);
+    if (!labelKey) {
+      await logEvent(slideId, 'preview', 'warn', 'Label photo upload to the cloud failed');
+      return;
+    }
+
+    const payload = buildBigtiffPublishedPayload({ slide, wasabi: getWasabiConfig(), s3Prefix, labelKey });
+    await getPool().query(
+      `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+       VALUES ($1, $2, $3, $4)`,
+      ['preview', `preview:${slideId}`, 'published', JSON.stringify(payload)]
+    );
+    await logEvent(slideId, 'preview', 'info', `Label photo published: ${labelKey}`);
+    await publishEvent('label:published', { slideId, labelKey, timestamp: Date.now() });
+    console.log(`${tag} label photo published (${labelKey})`);
+  } catch (err) {
+    console.error(`${tag} failed: ${err.message}`);
+    await logEvent(slideId, 'preview', 'error', `Label publish failed: ${err.message}`).catch(() => {});
   }
 }
 
@@ -945,6 +1000,12 @@ async function worker() {
       if (!result) continue;
 
       const job = JSON.parse(result.element);
+
+      if (job.type === 'LABEL_PUBLISH') {
+        // Backfill of the label photo for an existing slide: no slide status changes
+        await processLabelPublish(job);
+        continue;
+      }
 
       // BIGTIFF jobs run in parallel (up to calculated slots)
       if (job.type === 'BIGTIFF') {
