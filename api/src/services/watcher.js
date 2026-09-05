@@ -6,7 +6,8 @@ import { randomUUID } from 'crypto';
 import { pipeline } from 'stream/promises';
 import { hashFile } from '../lib/hash.js';
 import { enqueueJob } from '../lib/queue.js';
-import { createSlide, createJob, updateSlide } from '../db/slides.js';
+import { createSlide, createJob, updateSlide, getSlide, setSlideReviewStatus, countPendingReviewSlides } from '../db/slides.js';
+import { isReviewQueueEnabled } from '../lib/feature-flags.js';
 import { eventBus } from './events.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { loadConfig, getConfig } from '../lib/edge-config.js';
@@ -178,12 +179,25 @@ async function processFile(filePath) {
     }
 
     // ── Step 2: create DB record ──
+    const existedBefore = Boolean(await getSlide(slideId));
     const slide = await createSlide({
       id: slideId,
       originalFilename: originalName,
       rawPath: rawPath,
       format: format
     });
+
+    // Review queue applies to every NEW slide regardless of how it arrived
+    // (scanner adapter or inbox drop) — otherwise the inbox path would bypass
+    // the technician confirmation that gates SlideRegistered.
+    if (!existedBefore && isReviewQueueEnabled()) {
+      await setSlideReviewStatus(slideId, 'pending');
+      try {
+        eventBus.emitPendingCountChanged(await countPendingReviewSlides());
+      } catch (err) {
+        console.warn(`[ingest] Failed to broadcast pending count: ${err.message}`);
+      }
+    }
 
     // Parse filename for PathoWeb external case linkage
     const parsed = parsePathologyFilename(originalName);

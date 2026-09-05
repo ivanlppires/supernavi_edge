@@ -25,6 +25,7 @@ async function defaultEmitSlideRegistered(slideId) {
       external_case_id: s.external_case_id,
       external_case_base: s.external_case_base,
       external_slide_label: s.external_slide_label,
+      name_confirmed: true,
     })]
   );
 }

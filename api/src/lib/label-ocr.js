@@ -24,6 +24,15 @@ import { join } from 'path';
 import { constants } from 'fs';
 
 const OCR_MODEL = process.env.OCR_MODEL || 'gemini-2.5-flash';
+// Gemini 2.5 models "think" before answering and those hidden tokens count
+// against maxOutputTokens. With a tiny budget the visible answer can be cut
+// mid-identifier ("26-2" instead of "26-2614A"), which the parser then expands
+// to a real-looking but wrong case (AP26000002). So: generous budget, thinking
+// disabled (best-effort, see callVision), and MAX_TOKENS treated as unreadable.
+const OCR_MAX_OUTPUT_TOKENS = parseInt(process.env.OCR_MAX_OUTPUT_TOKENS || '1024', 10);
+const OCR_THINKING_BUDGET = process.env.OCR_THINKING_BUDGET === undefined || process.env.OCR_THINKING_BUDGET === ''
+  ? 0
+  : parseInt(process.env.OCR_THINKING_BUDGET, 10);
 
 const OCR_RESPONSE_REGEX = /^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i;
 
@@ -144,8 +153,19 @@ async function readImage(imagePath) {
   };
 }
 
+function buildGenerationConfig(withThinkingConfig) {
+  const cfg = { maxOutputTokens: OCR_MAX_OUTPUT_TOKENS, temperature: 0 };
+  if (withThinkingConfig && Number.isFinite(OCR_THINKING_BUDGET) && OCR_THINKING_BUDGET >= 0) {
+    // Not typed by the (deprecated) SDK but forwarded verbatim to the v1beta API.
+    cfg.thinkingConfig = { thinkingBudget: OCR_THINKING_BUDGET };
+  }
+  return cfg;
+}
+
 /**
  * Call Gemini Vision with one or more images and a prompt.
+ * Returns the raw text plus the candidate's finishReason so callers can tell a
+ * complete answer (STOP) from a truncated one (MAX_TOKENS).
  */
 async function callVision(images, prompt) {
   const parts = [
@@ -156,12 +176,57 @@ async function callVision(images, prompt) {
   ];
 
   const genai = await getClient();
-  const model = genai.getGenerativeModel({
-    model: OCR_MODEL,
-    generationConfig: { maxOutputTokens: 100, temperature: 0 },
-  });
-  const result = await model.generateContent({ contents: [{ role: 'user', parts }] });
-  return result.response.text() || '';
+  const attempt = async (withThinkingConfig) => {
+    const model = genai.getGenerativeModel({
+      model: OCR_MODEL,
+      generationConfig: buildGenerationConfig(withThinkingConfig),
+    });
+    const result = await model.generateContent({ contents: [{ role: 'user', parts }] });
+    const candidate = result.response?.candidates?.[0];
+    let text = '';
+    try {
+      text = result.response.text() || '';
+    } catch {
+      text = ''; // blocked / empty candidate — treated as unreadable by the caller
+    }
+    return { text, finishReason: candidate?.finishReason || null };
+  };
+
+  const wantsThinkingConfig = Number.isFinite(OCR_THINKING_BUDGET) && OCR_THINKING_BUDGET >= 0;
+  try {
+    return await attempt(wantsThinkingConfig);
+  } catch (err) {
+    // Older API surfaces / models may reject thinkingConfig — degrade gracefully
+    // instead of losing OCR entirely.
+    if (wantsThinkingConfig && /thinking|INVALID_ARGUMENT|\b400\b/i.test(err?.message || '')) {
+      console.warn(`[OCR] thinkingConfig rejected by API, retrying without it: ${err.message}`);
+      return attempt(false);
+    }
+    throw err;
+  }
+}
+
+/**
+ * Turn a raw model answer + finishReason into a decision.
+ * Exported for testing.
+ *
+ * @returns {{ status: 'ok'|'unreadable'|'truncated'|'blocked'|'unparsed', raw: string, finishReason: string|null, result: object|null }}
+ */
+export function interpretOcrResponse({ text, finishReason }) {
+  const raw = (text || '').trim();
+  const reason = finishReason || null;
+
+  if (reason && reason !== 'STOP' && reason !== 'FINISH_REASON_UNSPECIFIED') {
+    // MAX_TOKENS = the identifier was cut off. A partial identifier like "26-2"
+    // still parses (→ AP26000002) and is worse than no answer: never trust it.
+    return { status: reason === 'MAX_TOKENS' ? 'truncated' : 'blocked', raw, finishReason: reason, result: null };
+  }
+  if (!raw || raw.toUpperCase() === 'UNREADABLE') {
+    return { status: 'unreadable', raw, finishReason: reason, result: null };
+  }
+  const result = parseOcrResponse(raw);
+  if (!result) return { status: 'unparsed', raw, finishReason: reason, result: null };
+  return { status: 'ok', raw, finishReason: reason, result };
 }
 
 /**
@@ -174,20 +239,31 @@ async function callVision(images, prompt) {
  * @returns {Promise<{ fullName: string, caseBase: string, slideLabel: string } | null>}
  */
 export async function ocrLabel(dsmetaDir) {
+  const detailed = await ocrLabelDetailed(dsmetaDir);
+  return detailed.result;
+}
+
+/**
+ * Same as ocrLabel() but returns the full decision (status, raw text,
+ * finishReason) so callers can record WHY no name was proposed.
+ *
+ * @param {string} dsmetaDir - Path to the .dsmeta directory
+ * @returns {Promise<{ status: string, raw: string|null, finishReason: string|null, result: object|null }>}
+ */
+export async function ocrLabelDetailed(dsmetaDir) {
   const slide2Path = join(dsmetaDir, 'slide2.jpg');
   try {
     await access(slide2Path, constants.R_OK);
   } catch (err) {
-    if (err.code === 'ENOENT') return null;
+    if (err.code === 'ENOENT') return { status: 'no_image', raw: null, finishReason: null, result: null };
     throw err;
   }
 
   const slide2Image = await readImage(slide2Path);
-  const rawText = await callVision([slide2Image], SLIDE_OVERVIEW_PROMPT);
-  console.log(`[OCR] slide2.jpg response for ${dsmetaDir}: "${rawText}"`);
-
-  if (rawText.trim().toUpperCase() === 'UNREADABLE') return null;
-  return parseOcrResponse(rawText);
+  const { text, finishReason } = await callVision([slide2Image], SLIDE_OVERVIEW_PROMPT);
+  const decision = interpretOcrResponse({ text, finishReason });
+  console.log(`[OCR] slide2.jpg response for ${dsmetaDir}: "${text}" (finishReason=${finishReason || 'n/a'}, status=${decision.status})`);
+  return decision;
 }
 
 /**

@@ -13,6 +13,22 @@ import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 import { pipelineLog } from './lib/pipeline-log.js';
 import { canEmitRegistered } from './lib/review-gate.js';
+import { readFileSync } from 'fs';
+
+const PKG_VERSION = (() => {
+  try { return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version; }
+  catch { return 'unknown'; }
+})();
+
+/**
+ * name_confirmed flag sent to the cloud with SlideRegistered: true unless the
+ * slide is still waiting for (or failed) technician review. NULL review_status
+ * = legacy slide, treated as confirmed. The cloud refuses to auto-link
+ * unconfirmed names to patient cases.
+ */
+function isNameConfirmed(reviewStatus) {
+  return reviewStatus !== 'pending' && reviewStatus !== 'rescan';
+}
 
 // Pipeline mode: 'legacy_dzi' (default) or 'bigtiff_iiif'
 const PIPELINE_MODE = process.env.EDGE_PIPELINE_MODE || 'legacy_dzi';
@@ -437,7 +453,7 @@ async function processJob(job) {
         // Emit SlideRegistered outbox event now that tiles are fully ready
         try {
           const slideRow = await getPool().query(
-            'SELECT external_case_id, external_case_base, external_slide_label, original_filename, width, height, mpp FROM slides WHERE id = $1',
+            'SELECT external_case_id, external_case_base, external_slide_label, original_filename, width, height, mpp, review_status FROM slides WHERE id = $1',
             [job.slideId]
           );
           const slide = slideRow.rows[0];
@@ -458,6 +474,7 @@ async function processJob(job) {
                   external_case_id: slide.external_case_id || null,
                   external_case_base: slide.external_case_base || null,
                   external_slide_label: slide.external_slide_label || null,
+                  name_confirmed: isNameConfirmed(slide.review_status),
                 })]
               );
               console.log(`SlideRegistered event emitted for ${job.slideId.substring(0, 12)} (after TILEGEN)`);
@@ -658,7 +675,7 @@ async function processJob(job) {
         // Phase 4: Emit SlideRegistered outbox event
         try {
           const slideData = await getPool().query(
-            'SELECT external_case_id, external_case_base, external_slide_label, original_filename, width, height, mpp FROM slides WHERE id = $1',
+            'SELECT external_case_id, external_case_base, external_slide_label, original_filename, width, height, mpp, review_status FROM slides WHERE id = $1',
             [job.slideId]
           );
           const s = slideData.rows[0];
@@ -680,6 +697,7 @@ async function processJob(job) {
                   external_case_base: s.external_case_base || null,
                   external_slide_label: s.external_slide_label || null,
                   pipeline_mode: 'bigtiff_iiif',
+                  name_confirmed: isNameConfirmed(s.review_status),
                 })]
               );
               console.log(`[BIGTIFF] SlideRegistered event emitted for ${job.slideId.substring(0, 12)}`);
@@ -889,6 +907,7 @@ async function retryFailedTilegen() {
 
 async function worker() {
   console.log('SuperNavi Processor Worker starting...');
+  console.log(`Version: ${PKG_VERSION} — review gate ACTIVE (SlideRegistered only for confirmed/legacy slides)`);
   console.log(`WSI formats (OpenSlide): ${WSI_FORMATS.join(', ')}`);
   console.log(`Pipeline mode: ${PIPELINE_MODE}`);
   if (PIPELINE_MODE === 'bigtiff_iiif') {

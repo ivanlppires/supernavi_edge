@@ -8,7 +8,8 @@ import { enqueueJob } from '../lib/queue.js';
 import { query } from '../db/index.js';
 import { ocrLabel, isOcrEnabled, parseOcrResponse } from '../lib/label-ocr.js';
 import { stat } from 'fs/promises';
-import { canEmitRegistered } from '../lib/review-gate.js';
+import { shouldEmitRegistered } from '../lib/review-gate.js';
+import { pipelineLog } from '../services/pipeline-log.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
@@ -61,6 +62,59 @@ async function countTilesOnDisk(slideId) {
     }
   } catch {}
   return total;
+}
+
+/**
+ * After a name change (manual rename or re-OCR), push the new name to the
+ * cloud when allowed. The review gate normally holds SlideRegistered until the
+ * technician confirms — but if the cloud ALREADY received a name for this
+ * slide (it was synced before the correction), the correction must go out
+ * regardless, otherwise the cloud keeps showing the wrong (possibly other
+ * patient's) case. Records the outcome in slide_pipeline_events so a silent
+ * "renamed but never synced" state is visible in the dashboard timeline.
+ *
+ * @returns {Promise<{ synced: boolean, note: string }>}
+ */
+async function reemitAfterNameChange({ slideId, slide, newFilename, source, nameConfirmed }) {
+  const tag = source === 'rename' ? '[Rename]' : '[OCR]';
+  if (!slide) return { synced: false, note: 'slide not found' };
+
+  if (slide.tilegen_status !== 'done') {
+    const note = 'processing not finished; the new name will be sent when processing completes (if the slide is confirmed)';
+    await pipelineLog(slideId, 'outbox', 'info', `${tag} name set to ${newFilename} — ${note}`, { source });
+    return { synced: false, note };
+  }
+
+  const decision = await shouldEmitRegistered(slideId);
+  if (!decision.emit) {
+    const note = `not synced to cloud (${decision.reason}); confirm the slide in the review queue to publish it`;
+    console.log(`${tag} Skipping SlideRegistered for ${slideId.substring(0, 12)} (${decision.reason})`);
+    await pipelineLog(slideId, 'outbox', 'warn', `${tag} renamed to ${newFilename} but ${note}`,
+      { source, reviewStatus: decision.reviewStatus });
+    return { synced: false, note };
+  }
+
+  await query(
+    `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
+     VALUES ($1, $2, $3, $4)`,
+    ['slide', slideId, 'registered', JSON.stringify({
+      slide_id: slideId,
+      case_id: null,
+      svs_filename: newFilename,
+      width: slide.width || 0,
+      height: slide.height || 0,
+      mpp: parseFloat(slide.mpp) || 0,
+      external_case_id: slide.external_case_id,
+      external_case_base: slide.external_case_base,
+      external_slide_label: slide.external_slide_label,
+      name_confirmed: nameConfirmed,
+    })]
+  );
+  const note = `SlideRegistered queued for cloud (${decision.reason})`;
+  console.log(`${tag} ${note} for ${slideId.substring(0, 12)} → ${newFilename}`);
+  await pipelineLog(slideId, 'outbox', 'info', `${tag} ${note}: ${newFilename}`,
+    { source, reviewStatus: decision.reviewStatus, nameConfirmed });
+  return { synced: true, note };
 }
 
 export default async function slidesRoutes(fastify) {
@@ -467,34 +521,22 @@ export default async function slidesRoutes(fastify) {
 
     // Re-emit SlideRegistered outbox event if tilegen is done
     const slideRow = await query(
-      'SELECT width, height, mpp, tilegen_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+      'SELECT width, height, mpp, tilegen_status, review_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
       [slideId]
     );
     const s = slideRow.rows[0];
-    if (s && s.tilegen_status === 'done') {
-      if (!(await canEmitRegistered(slideId))) {
-        console.log(`[OCR] Skipping SlideRegistered for ${slideId.substring(0, 12)} (not confirmed)`);
-      } else {
-        await query(
-          `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-           VALUES ($1, $2, $3, $4)`,
-          ['slide', slideId, 'registered', JSON.stringify({
-            slide_id: slideId,
-            case_id: null,
-            svs_filename: newFilename,
-            width: s.width || 0,
-            height: s.height || 0,
-            mpp: parseFloat(s.mpp) || 0,
-            external_case_id: s.external_case_id,
-            external_case_base: s.external_case_base,
-            external_slide_label: s.external_slide_label,
-          })]
-        );
-      }
-    }
+    const sync = await reemitAfterNameChange({
+      slideId,
+      slide: s,
+      newFilename,
+      source: 'reocr',
+      nameConfirmed: s ? (s.review_status === null || s.review_status === 'confirmed') : false,
+    });
 
     return {
       success: true,
+      synced: sync.synced,
+      syncNote: sync.note,
       ocrStatus: 'done',
       fullName: dedupName,
       caseBase: ocrResult.caseBase,
@@ -539,34 +581,22 @@ export default async function slidesRoutes(fastify) {
 
     // Re-emit SlideRegistered outbox event if tilegen is done
     const slideRow = await query(
-      'SELECT width, height, mpp, tilegen_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
+      'SELECT width, height, mpp, tilegen_status, review_status, external_case_id, external_case_base, external_slide_label FROM slides WHERE id = $1',
       [slideId]
     );
     const s = slideRow.rows[0];
-    if (s && s.tilegen_status === 'done') {
-      if (!(await canEmitRegistered(slideId))) {
-        console.log(`[Rename] Skipping SlideRegistered for ${slideId.substring(0, 12)} (not confirmed)`);
-      } else {
-        await query(
-          `INSERT INTO outbox_events (entity_type, entity_id, op, payload)
-           VALUES ($1, $2, $3, $4)`,
-          ['slide', slideId, 'registered', JSON.stringify({
-            slide_id: slideId,
-            case_id: null,
-            svs_filename: newFilename,
-            width: s.width || 0,
-            height: s.height || 0,
-            mpp: parseFloat(s.mpp) || 0,
-            external_case_id: s.external_case_id,
-            external_case_base: s.external_case_base,
-            external_slide_label: s.external_slide_label,
-          })]
-        );
-      }
-    }
+    const sync = await reemitAfterNameChange({
+      slideId,
+      slide: s,
+      newFilename,
+      source: 'rename',
+      nameConfirmed: s ? true : false,
+    });
 
     return {
       success: true,
+      synced: sync.synced,
+      syncNote: sync.note,
       ocrStatus: 'done',
       fullName: dedupName,
       caseBase: parsed.caseBase,
