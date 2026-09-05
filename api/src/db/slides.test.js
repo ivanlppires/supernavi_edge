@@ -1,18 +1,20 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-test('listPendingReviewSlides exists and is async', async () => {
+test('updateSlideExternalFields exists and accepts (id, fields)', async () => {
   const mod = await import('./slides.js');
-  assert.equal(typeof mod.listPendingReviewSlides, 'function');
+  assert.equal(typeof mod.updateSlideExternalFields, 'function');
+  assert.equal(mod.updateSlideExternalFields.length, 2);
 });
 
-test('setSlideReviewStatus exists and accepts (id, status)', async () => {
+test('getRecentMaxCaseBase (plausibility reference for manual names) is kept', async () => {
   const mod = await import('./slides.js');
-  assert.equal(typeof mod.setSlideReviewStatus, 'function');
-  assert.equal(mod.setSlideReviewStatus.length, 2);
+  assert.equal(typeof mod.getRecentMaxCaseBase, 'function');
 });
 
-test('countPendingReviewSlides exists', async () => {
+test('review-queue and OCR helpers are gone', async () => {
   const mod = await import('./slides.js');
-  assert.equal(typeof mod.countPendingReviewSlides, 'function');
+  for (const fn of ['updateSlideOcr', 'listPendingOcrSlides', 'listPendingReviewSlides', 'countPendingReviewSlides', 'setSlideReviewStatus']) {
+    assert.equal(mod[fn], undefined, `${fn} should not be exported`);
+  }
 });

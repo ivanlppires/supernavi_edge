@@ -93,15 +93,6 @@ class SSEEventBus extends EventEmitter {
     });
   }
 
-  /**
-   * Emit pending review queue count change (technician review queue badge).
-   */
-  emitPendingCountChanged(count) {
-    this.emit('sse', {
-      event: 'pending:count-changed',
-      data: { count, timestamp: Date.now() }
-    });
-  }
 }
 
 // Singleton instance

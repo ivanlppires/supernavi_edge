@@ -43,7 +43,7 @@ export async function getSlide(id) {
 export async function listSlides() {
   const result = await query(
     `SELECT id, original_filename, status, width, height, max_level, level_ready_max,
-            format, app_mag, mpp, created_at, ocr_status, external_case_base,
+            format, app_mag, mpp, created_at, external_case_base,
             external_slide_label, dsmeta_path, raw_path, pipeline_mode, tilegen_status,
             cloud_upload_status, latest_error, latest_error_stage, latest_error_at
        FROM slides ORDER BY created_at DESC`
@@ -107,9 +107,10 @@ export async function updateLevelReadyMax(id, levelReadyMax) {
 }
 
 /**
- * Update a slide's original_filename and external fields after OCR rename.
+ * Update a slide's filename, PathoWeb identity and .dsmeta path after a person
+ * names it (or the filename parser recognises it). Only defined keys are written.
  */
-export async function updateSlideOcr(id, { originalFilename, externalCaseId, externalCaseBase, externalSlideLabel, ocrStatus, dsmetaPath }) {
+export async function updateSlideExternalFields(id, { originalFilename, externalCaseId, externalCaseBase, externalSlideLabel, dsmetaPath }) {
   const sets = [];
   const vals = [];
   let idx = 1;
@@ -118,7 +119,6 @@ export async function updateSlideOcr(id, { originalFilename, externalCaseId, ext
   if (externalCaseId !== undefined) { sets.push(`external_case_id = $${idx++}`); vals.push(externalCaseId); }
   if (externalCaseBase !== undefined) { sets.push(`external_case_base = $${idx++}`); vals.push(externalCaseBase); }
   if (externalSlideLabel !== undefined) { sets.push(`external_slide_label = $${idx++}`); vals.push(externalSlideLabel); }
-  if (ocrStatus !== undefined) { sets.push(`ocr_status = $${idx++}`); vals.push(ocrStatus); }
   if (dsmetaPath !== undefined) { sets.push(`dsmeta_path = $${idx++}`); vals.push(dsmetaPath); }
 
   if (sets.length === 0) return;
@@ -188,61 +188,8 @@ export async function deduplicateSlideLabel(fullName, slideId) {
 }
 
 /**
- * List slides with pending OCR status for retry.
- */
-export async function listPendingOcrSlides() {
-  const result = await query(
-    `SELECT id, original_filename, dsmeta_path, format FROM slides WHERE ocr_status = 'pending'`
-  );
-  return result.rows;
-}
-
-/**
- * List slides waiting for technician review.
- * Returns the data the dashboard fila needs: identifier proposals + age.
- */
-export async function listPendingReviewSlides() {
-  const result = await query(
-    `SELECT id,
-            original_filename,
-            external_case_base,
-            external_slide_label,
-            dsmeta_path,
-            format,
-            created_at
-       FROM slides
-      WHERE review_status = 'pending'
-      ORDER BY created_at ASC`
-  );
-  return result.rows;
-}
-
-/**
- * Count slides waiting for review (used for the dashboard badge).
- */
-export async function countPendingReviewSlides() {
-  const result = await query(
-    `SELECT COUNT(*)::int AS n FROM slides WHERE review_status = 'pending'`
-  );
-  return result.rows[0].n;
-}
-
-/**
- * Atomically set review_status. Returns true if a row was updated.
- */
-export async function setSlideReviewStatus(id, status) {
-  const allowed = new Set(['pending', 'confirmed', 'rescan']);
-  if (!allowed.has(status)) throw new Error(`invalid review_status: ${status}`);
-  const result = await query(
-    `UPDATE slides SET review_status = $1 WHERE id = $2`,
-    [status, id]
-  );
-  return result.rowCount > 0;
-}
-
-/**
  * Highest external_case_base registered recently for a prefix + 2-digit year
- * (e.g. 'AP', '26' → 'AP26002643'). Used to sanity-check OCR proposals.
+ * (e.g. 'AP', '26' → 'AP26002643'). Used to sanity-check names typed by a person.
  * Case bases are fixed-width (prefix + 8 digits) so lexical order == numeric.
  */
 export async function getRecentMaxCaseBase(prefix, year, days = 120) {

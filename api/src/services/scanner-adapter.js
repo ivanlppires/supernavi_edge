@@ -18,17 +18,12 @@ import { readdir, access } from 'fs/promises';
 import { join, extname } from 'path';
 import { constants } from 'fs';
 import { hashFile } from '../lib/hash.js';
-import { parseDsmeta, parseMoticPath } from '../lib/dsmeta-parser.js';
-import { createSlide, createJob, updateSlide, updateSlideOcr, listPendingOcrSlides, deduplicateSlideLabel, setSlideReviewStatus, getRecentMaxCaseBase } from '../db/slides.js';
-import { query } from '../db/index.js';
-import { ocrLabelDetailed, isOcrEnabled } from '../lib/label-ocr.js';
-import { isImplausiblyLowCaseNumber, parseCaseBase } from '../lib/case-plausibility.js';
-import { pipelineLog } from './pipeline-log.js';
+import { parseDsmeta, parseMoticPath, findDsmetaDir } from '../lib/dsmeta-parser.js';
+import { createSlide, createJob, updateSlide, updateSlideExternalFields, deduplicateSlideLabel } from '../db/slides.js';
 import { parsePathologyFilename } from '../lib/filename-parser.js';
 import { scannerFileExists, insertScannerFile, getAllScannerFilePaths } from '../db/scanner.js';
 import { enqueueJob } from '../lib/queue.js';
 import { eventBus } from './events.js';
-import { isReviewQueueEnabled } from '../lib/feature-flags.js';
 
 const WSI_EXTENSIONS = new Set(['.svs', '.ndpi', '.tif', '.tiff', '.mrxs']);
 
@@ -91,16 +86,17 @@ async function processNewFile(filePath) {
   console.log(`[Scanner] ${filename} -> slideId: ${slideId.substring(0, 12)}...`);
 
   let effectiveFilename = filename;
-  let ocrStatus = null;
-  let dsmetaPath = null;
   let externalFields = null;
-  // slide_pipeline_events has a FK to slides — OCR runs before createSlide, so
-  // buffer the observability entries and flush them once the row exists.
-  const deferredLogs = [];
 
+  // Motic writes `<file>.svs.dsmeta/` next to the SVS with label.jpg (photo of the
+  // label) and slide2.jpg (photo of the whole slide). Persist the path whenever the
+  // folder exists so the label can be served regardless of how the slide is named.
   const dsmetaDir = filePath + '.dsmeta';
+  const dsmetaPath = await findDsmetaDir(filePath);
 
-  // 1. Try filename parser first — free, deterministic, no API call.
+  // Filename parser — free, deterministic. Motic names ({barcode}_{datetime}.svs)
+  // never match, so those slides wait for a person to name them (dashboard
+  // "Identificar lâmina" or a rename from the viewer). No automatic naming.
   const parsed = parsePathologyFilename(filename);
   if (parsed) {
     const fullName = `${parsed.caseBase}${parsed.label}`;
@@ -111,64 +107,9 @@ async function processNewFile(filePath) {
       externalCaseBase: parsed.externalCaseBase,
       externalSlideLabel: dedupName,
     };
-    console.log(`[Scanner] Filename parsed: ${filename} -> ${effectiveFilename} (no OCR needed)`);
-  }
-
-  // 2. Fallback to OCR only when filename didn't match the pathology pattern.
-  if (!externalFields && isOcrEnabled()) {
-    try {
-      await access(dsmetaDir, constants.R_OK);
-      dsmetaPath = dsmetaDir;
-
-      console.log(`[Scanner] OCR: found dsmeta at ${dsmetaDir}`);
-      const ocr = await ocrLabelDetailed(dsmetaDir);
-      let ocrResult = ocr.result;
-
-      // Sanity check: a proposal far below the lab's recent case numbers is a
-      // truncated/misread label (e.g. "26-2" → AP26000002). Drop it rather than
-      // attach the slide to the wrong patient; the technician types the name.
-      if (ocrResult) {
-        const parsedBase = parseCaseBase(ocrResult.caseBase);
-        const reference = parsedBase ? await getRecentMaxCaseBase(parsedBase.prefix, parsedBase.year) : null;
-        if (reference && isImplausiblyLowCaseNumber(ocrResult.caseBase, reference)) {
-          console.warn(`[Scanner] OCR: "${ocr.raw}" → ${ocrResult.fullName} is implausibly low vs recent ${reference}; treating as unreadable`);
-          deferredLogs.push(['ingest', 'warn',
-            `OCR proposal ${ocrResult.fullName} rejected: implausible vs recent cases (${reference}); slide left unnamed for review`,
-            { raw: ocr.raw, finishReason: ocr.finishReason, reference }]);
-          ocrResult = null;
-        }
-      }
-
-      if (ocrResult) {
-        const dedupName = await deduplicateSlideLabel(ocrResult.fullName, slideId);
-        const newFilename = dedupName + '.' + format;
-        console.log(`[Scanner] OCR: ${filename} -> ${newFilename}`);
-        effectiveFilename = newFilename;
-        ocrStatus = 'done';
-        externalFields = {
-          externalCaseId: `pathoweb:${ocrResult.caseBase}`,
-          externalCaseBase: ocrResult.caseBase,
-          externalSlideLabel: dedupName,
-        };
-        deferredLogs.push(['ingest', 'info', `OCR proposed ${dedupName} (awaiting review)`,
-          { raw: ocr.raw, finishReason: ocr.finishReason }]);
-      } else {
-        console.log(`[Scanner] OCR: no usable name for ${filename} (${ocr.status}, raw="${ocr.raw ?? ''}", finishReason=${ocr.finishReason || 'n/a'}), processing with original name`);
-        ocrStatus = 'pending';
-        if (ocr.status !== 'no_image' && !deferredLogs.length) {
-          deferredLogs.push(['ingest', 'warn', `OCR produced no name (${ocr.status})`,
-            { raw: ocr.raw, finishReason: ocr.finishReason }]);
-        }
-      }
-    } catch (err) {
-      if (err.code === 'ENOENT') {
-        console.log(`[Scanner] No label.jpg in .dsmeta for ${filename}`);
-      } else {
-        console.error(`[Scanner] OCR error for ${filename}: ${err.message}`);
-        ocrStatus = 'pending';
-        dsmetaPath = dsmetaDir;
-      }
-    }
+    console.log(`[Scanner] Filename parsed: ${filename} -> ${effectiveFilename}`);
+  } else {
+    console.log(`[Scanner] ${filename} carries no case identifier; waiting for a person to name it`);
   }
 
   // --- Register slide ---
@@ -179,27 +120,9 @@ async function processNewFile(filePath) {
     format,
   });
 
-  for (const [stage, level, message, details] of deferredLogs) {
-    await pipelineLog(slideId, stage, level, message, details);
-  }
-
-  if (isReviewQueueEnabled()) {
-    // Every new slide starts as pending review (technician confirms name +
-    // context). Legacy ocrStatus stays for backward compat in the schema.
-    await setSlideReviewStatus(slideId, 'pending');
-
-    try {
-      const { countPendingReviewSlides } = await import('../db/slides.js');
-      const n = await countPendingReviewSlides();
-      eventBus.emitPendingCountChanged(n);
-    } catch (err) {
-      console.warn(`[Scanner] Failed to broadcast pending count: ${err.message}`);
-    }
-  }
-
-  const slideUpdates = { ...(externalFields || {}), ocrStatus, dsmetaPath };
+  const slideUpdates = { ...(externalFields || {}), dsmetaPath };
   if (Object.values(slideUpdates).some(v => v !== null && v !== undefined)) {
-    await updateSlideOcr(slideId, slideUpdates);
+    await updateSlideExternalFields(slideId, slideUpdates);
   }
 
   // --- Parse dsmeta for barcode/guid ---
@@ -249,7 +172,7 @@ async function processNewFile(filePath) {
 
   eventBus.emitSlideImport(slideId, effectiveFilename, format);
 
-  console.log(`[Scanner] Registered slide ${slideId.substring(0, 12)} (${effectiveFilename}, barcode=${barcode || 'unknown'}, ocr=${ocrStatus || 'n/a'})`);
+  console.log(`[Scanner] Registered slide ${slideId.substring(0, 12)} (${effectiveFilename}, barcode=${barcode || 'unknown'}, label=${dsmetaPath ? 'yes' : 'no'})`);
   return slideId;
 }
 
