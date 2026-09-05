@@ -6,7 +6,8 @@
  * Motic directory hierarchy.
  */
 
-import { readFile } from 'fs/promises';
+import { readFile, access } from 'fs/promises';
+import { constants } from 'fs';
 import { join } from 'path';
 
 /**
@@ -68,4 +69,22 @@ export function parseMoticPath(filePath) {
     scanDatetime: match[5],
     filename: match[6],
   };
+}
+
+/**
+ * Path of the Motic `<file>.svs.dsmeta/` folder next to an SVS, or null when
+ * it does not exist / is not readable. The folder holds label.jpg (label photo)
+ * and slide2.jpg (whole-slide photo).
+ *
+ * @param {string} svsPath
+ * @returns {Promise<string|null>}
+ */
+export async function findDsmetaDir(svsPath) {
+  const dir = svsPath + '.dsmeta';
+  try {
+    await access(dir, constants.R_OK);
+    return dir;
+  } catch {
+    return null;
+  }
 }

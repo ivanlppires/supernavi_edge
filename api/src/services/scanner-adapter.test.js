@@ -92,4 +92,17 @@ describe('scanner-adapter integration (filesystem only)', () => {
     assert.equal(result.guid, 'F278D360-BCCB-42D0-9F64-0587B91DEB50');
     assert.equal(result.scanDatetime, '20251212151927');
   });
+  it('findDsmetaDir returns the .dsmeta folder next to the SVS when it exists', async () => {
+    const { findDsmetaDir } = await import('../lib/dsmeta-parser.js');
+    const svs = join(scannerDir, '2026', '0120', 'F278D360-BCCB-42D0-9F64-0587B91DEB50',
+      '485948_20251212151927', '485948_20251212151927.svs');
+    assert.equal(await findDsmetaDir(svs), svs + '.dsmeta');
+  });
+
+  it('findDsmetaDir returns null when the SVS has no .dsmeta folder', async () => {
+    const { findDsmetaDir } = await import('../lib/dsmeta-parser.js');
+    const svs = join(scannerDir, '2025', '1114', 'AAAABBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF',
+      '999001_20251114093000', '999001_20251114093000.svs');
+    assert.equal(await findDsmetaDir(svs), null);
+  });
 });
