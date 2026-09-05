@@ -13,6 +13,7 @@ import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 import { pipelineLog } from './lib/pipeline-log.js';
 import { canEmitRegistered } from './lib/review-gate.js';
+import { copyLabelFromDsmeta } from './lib/label-asset.js';
 import { readFileSync } from 'fs';
 
 const PKG_VERSION = (() => {
@@ -388,6 +389,9 @@ async function processJob(job) {
           console.log(`  Regenerating thumbnail from ${rawPath}...`);
           await generateThumbnail(rawPath, thumbPath);
         }
+        if (rawPath) {
+          await copyLabelFromDsmeta(job.slideId, rawPath);
+        }
 
         // Optionally delete marker to force re-upload
         if (job.force) {
@@ -557,6 +561,7 @@ async function processJob(job) {
                         wasabi_endpoint: wCfg.endpoint,
                         wasabi_prefix: getSlidePrefix(job.slideId),
                         thumb_key: `${wCfg.prefixBase}/${job.slideId}/thumb.jpg`,
+                        ...(uploadResult.labelKey ? { label_key: uploadResult.labelKey } : {}),
                         manifest_key: `${wCfg.prefixBase}/${job.slideId}/manifest.json`,
                         tiles_prefix: s3Prefix,
                         low_tiles_prefix: `${wCfg.prefixBase}/${job.slideId}/tiles/`,
@@ -640,6 +645,8 @@ async function processJob(job) {
 
         // Phase 1: Generate BigTIFF
         console.log(`[BIGTIFF] Starting pipeline for ${job.slideId.substring(0, 12)} (mode: bigtiff_iiif)`);
+        // Slides processed before label support get their photo copied here (reprocess)
+        await copyLabelFromDsmeta(job.slideId, job.rawPath);
         const genResult = await generateBigTIFF(job.slideId, job.rawPath);
 
         await updateSlide(job.slideId, { bigtiff_size: genResult.size });
@@ -733,6 +740,7 @@ async function processJob(job) {
                 wasabi_endpoint: wCfg.endpoint,
                 wasabi_prefix: s3Prefix,
                 thumb_key: `${s3Prefix}thumb.jpg`,
+                ...(uploadResult.labelKey ? { label_key: uploadResult.labelKey } : {}),
                 manifest_key: `${s3Prefix}manifest.json`,
                 tiles_prefix: s3Prefix,
                 low_tiles_prefix: s3Prefix,

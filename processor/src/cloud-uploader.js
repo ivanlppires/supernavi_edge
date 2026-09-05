@@ -12,6 +12,7 @@ import { spawn } from 'child_process';
 import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
+import { findLabelPath } from './lib/label-asset.js';
 
 const DERIVED_DIR = process.env.DERIVED_DIR || '/data/derived';
 const TILES_HOT_DIR = process.env.TILES_HOT_DIR || '/data/tiles_hot';
@@ -258,13 +259,18 @@ async function uploadTilesIndividual(slideId, s3Prefix) {
 }
 
 /**
- * Upload tile_manifest.json and thumb.jpg via presigned URLs.
+ * Upload tile_manifest.json, thumb.jpg and (when present) label.jpg via presigned URLs.
+ * @returns {Promise<{ labelKey: string|null }>}
  */
 async function uploadMetadata(slideId, s3Prefix, manifest) {
   const thumbPath = join(DERIVED_DIR, slideId, 'thumb.jpg');
+  const labelPath = await findLabelPath(slideId);
+  const labelKey = labelPath ? `${s3Prefix}label.jpg` : null;
+
   const items = [
     { key: `${s3Prefix}tile_manifest.json`, contentType: 'application/json' },
     { key: `${s3Prefix}thumb.jpg`, contentType: 'image/jpeg' },
+    ...(labelKey ? [{ key: labelKey, contentType: 'image/jpeg' }] : []),
   ];
 
   const res = await fetchWithRetry(`${CLOUD_API_URL}/edge/upload-urls`, {
@@ -293,6 +299,28 @@ async function uploadMetadata(slideId, s3Prefix, manifest) {
   } catch {
     console.warn(`[UPLOAD] No thumb.jpg for ${slideId.substring(0, 12)}`);
   }
+
+  // Upload label photo (non-fatal)
+  if (labelKey) {
+    try {
+      const labelData = await readFile(labelPath);
+      const putRes = await fetch(putUrls[labelKey], {
+        method: 'PUT',
+        headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=86400' },
+        body: labelData,
+      });
+      if (!putRes.ok) {
+        console.warn(`[UPLOAD] Label PUT failed (non-fatal): ${putRes.status}`);
+        return { labelKey: null };
+      }
+      console.log(`[UPLOAD] Label photo uploaded: ${labelKey}`);
+    } catch (err) {
+      console.warn(`[UPLOAD] Label upload failed (non-fatal): ${err.message}`);
+      return { labelKey: null };
+    }
+  }
+
+  return { labelKey };
 }
 
 /**
@@ -345,7 +373,7 @@ export async function uploadSlideToCloud(slideId, slideMetadata) {
   }
 
   // Upload metadata
-  await uploadMetadata(slideId, s3Prefix, manifest);
+  const { labelKey } = await uploadMetadata(slideId, s3Prefix, manifest);
 
   // Notify cloud READY
   const readyBody = { tileCount, levelCounts: manifest.levelCounts };
@@ -364,5 +392,5 @@ export async function uploadSlideToCloud(slideId, slideMetadata) {
   const elapsed = Date.now() - uploadStart;
   console.log(`[UPLOAD] Complete: ${tileCount} tiles in ${(elapsed / 1000).toFixed(1)}s (${uploadMode})`);
 
-  return { status: 'READY', mode: uploadMode, tileCount, elapsed, s3Prefix };
+  return { status: 'READY', mode: uploadMode, tileCount, elapsed, s3Prefix, labelKey };
 }

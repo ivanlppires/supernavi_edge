@@ -11,6 +11,7 @@ import { promisify } from 'util';
 import { mkdir, writeFile, unlink, access, readdir, rename } from 'fs/promises';
 import { join, basename } from 'path';
 import sharp from 'sharp';
+import { copyLabelFromDsmeta } from './lib/label-asset.js';
 
 const execAsync = promisify(exec);
 
@@ -262,6 +263,9 @@ export async function processSVS_P0(job) {
   const thumbPath = join(slideDir, 'thumb.jpg');
   await generateThumbnail(rawPath, thumbPath);
 
+  // Label photo (Motic .dsmeta/label.jpg) — best-effort, null when absent
+  const labelPath = await copyLabelFromDsmeta(slideId, rawPath);
+
   // Create tiles directory (tiles generated on-demand)
   const tilesDir = join(slideDir, 'tiles');
   await mkdir(tilesDir, { recursive: true });
@@ -298,6 +302,7 @@ export async function processSVS_P0(job) {
     levelReadyMax: 0,     // Tiles generated on-demand
     thumbPath,
     manifestPath,
+    labelPath,            // derived/{slideId}/label.jpg or null
     appMag,               // Native scan magnification
     mpp                   // Microns per pixel
   };
