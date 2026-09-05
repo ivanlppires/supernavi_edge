@@ -409,6 +409,7 @@
       <button type="button" id="pendingPanelClose" aria-label="Fechar">&times;</button>
     </div>
     <ul id="pendingPanelList" class="pending-panel__list"></ul>
+    <button type="button" id="pendingConfirmAll" class="pending-panel__open">Confirmar todas as leituras</button>
     <button type="button" id="pendingPanelOpenAll" class="pending-panel__open">Abrir fila completa</button>
   </div>
 
@@ -433,10 +434,9 @@
           <label class="review-field">
             <span>Nome da lâmina</span>
             <input type="text" id="reviewFilename" autocomplete="off" spellcheck="false">
-            <small id="reviewFilenameHint">Sugestão IA</small>
+            <small id="reviewFilenameHint">Leitura do OCR</small>
             <small id="reviewFilenameError" class="error hidden"></small>
           </label>
-          <div id="reviewContextSection"></div>
           <footer class="review-modal__actions">
             <button type="button" id="reviewRescan" class="secondary">Marcar para rescanear</button>
             <div class="spacer"></div>

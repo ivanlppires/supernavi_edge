@@ -333,31 +333,31 @@
 
     info.appendChild(meta);
 
-    // OCR indicator
-    if (slide.ocrStatus) {
-      const ocrRow = el('div', { className: 'slide-ocr' });
-      const ocrBadge = el('span', {
-        className: 'ocr-badge ' + (slide.ocrStatus === 'done' ? 'ocr-done' : 'ocr-pending')
-      });
-
-      if (slide.ocrStatus === 'done') {
-        ocrBadge.textContent = 'OCR: ' + (slide.externalSlideLabel || '?');
-      } else {
-        ocrBadge.textContent = 'OCR: Pendente';
-      }
-
-      ocrRow.appendChild(ocrBadge);
-
-      if (slide.hasLabel) {
-        ocrBadge.classList.add('clickable');
-        ocrBadge.addEventListener('click', (e) => {
-          e.stopPropagation();
-          openOcrModal(slide);
-        });
-      }
-
-      info.appendChild(ocrRow);
+    // Identification badge. Pending (OCR reading or no name) → review modal
+    // (photo + reading, confirm/correct/rescan). Otherwise → identify/rename
+    // modal (photos, re-read OCR, manual name).
+    const idRow = el('div', { className: 'slide-ocr' });
+    const pendingReview = slide.reviewStatus === 'pending';
+    const named = !!slide.externalSlideLabel;
+    const idBadge = el('span', { className: 'ocr-badge ' + ((pendingReview || !named) ? 'ocr-pending' : 'ocr-done') });
+    if (pendingReview) {
+      idBadge.textContent = named ? 'Confirmar: ' + slide.externalSlideLabel : 'Sem leitura \u2014 identificar';
+      idBadge.title = 'Revisar a leitura da etiqueta';
+    } else {
+      idBadge.textContent = named ? slide.externalSlideLabel : 'Sem identifica\u00e7\u00e3o';
+      idBadge.title = 'Ver a etiqueta / renomear';
     }
+    idBadge.classList.add('clickable');
+    idBadge.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (pendingReview) {
+        document.dispatchEvent(new CustomEvent('open-review-modal', { detail: { slideId: slide.slideId } }));
+      } else {
+        openOcrModal(slide);
+      }
+    });
+    idRow.appendChild(idBadge);
+    info.appendChild(idRow);
 
     card.appendChild(info);
 
@@ -1729,29 +1729,11 @@
     });
   }
 
-  // === Review queue (Tasks 11-14) ============================
-  // Single async IIFE: capability check gates ALL wiring. When the feature is
-  // disabled, removes badge/panel/modal from DOM and returns — nothing else
-  // attaches, nothing fetches /v1/pending-slides.
+  // === Review queue ==========================================
+  // Names proposed by OCR (or missing) wait here for a person. Nothing is
+  // blocked: the slide processes and uploads; the cloud keeps it out of
+  // PathoWeb until confirmed. Always active.
   (async () => {
-    let reviewQueueEnabled = false;
-    try {
-      const r = await fetch('/v1/capabilities');
-      if (r.ok) {
-        const caps = await r.json();
-        reviewQueueEnabled = caps?.features?.review_queue === true;
-      }
-    } catch (err) {
-      console.warn('Failed to check review_queue capability:', err);
-    }
-
-    if (!reviewQueueEnabled) {
-      ['pendingBadge', 'pendingPanel', 'reviewModal'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.remove();
-      });
-      return;
-    }
 
   // =====================
   //  Review queue: pending badge (Task 11)
@@ -1846,6 +1828,32 @@
       });
     }
 
+    // One click accepts every OCR reading in the queue; unnamed slides stay pending
+    const pendingConfirmAll = document.getElementById('pendingConfirmAll');
+    if (pendingConfirmAll) {
+      pendingConfirmAll.addEventListener('click', async () => {
+        if (!confirm('Confirmar todas as leituras do OCR que estão na fila?')) return;
+        pendingConfirmAll.disabled = true;
+        try {
+          const res = await fetch('/v1/pending-slides/confirm-all', { method: 'POST' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          const failed = (data.failed || []).length;
+          alert(`Confirmadas: ${data.confirmed}. Sem leitura (ficam na fila): ${data.skipped}.` + (failed ? ` Falhas: ${failed}.` : ''));
+          await renderPendingPanel();
+          try {
+            const r = await fetch('/v1/pending-slides');
+            if (r.ok) updatePendingBadge((await r.json()).total);
+          } catch (err) { console.warn('Failed to refresh pending badge:', err); }
+          fetchSlides();
+        } catch (err) {
+          alert(`Erro: ${err.message}`);
+        } finally {
+          pendingConfirmAll.disabled = false;
+        }
+      });
+    }
+
     // Close on outside click (but not when clicking the badge that opened it).
     document.addEventListener('click', (e) => {
       if (pendingPanel.classList.contains('hidden')) return;
@@ -1872,12 +1880,12 @@
   const reviewFilenameHint = document.getElementById('reviewFilenameHint');
   const reviewFilenameError = document.getElementById('reviewFilenameError');
   const reviewConfirm = document.getElementById('reviewConfirm');
-  const reviewContextSection = document.getElementById('reviewContextSection');
 
   let currentSlideId = null;
   let currentImageWhich = 'label';
 
-  const FILENAME_RE = /^(AP|PA|IM|C)\d{6,12}[A-Z]?\d*$/;
+  // Full form or the handwritten abbreviated form (3+ digits after the separator)
+  const FILENAME_RE = /^((AP|PA|IM|C)\d{6,12}[A-Z]?\d*|\d{2}[-_]\d{3,6}[A-Z]?\d*)$/i;
 
   function loadImage(slideId, which) {
     if (!reviewImage || !reviewImageEmpty) return;
@@ -1914,17 +1922,6 @@
   }
 
   // renderContextSection is defined in Task 14; guard the call.
-  async function safeRenderContextSection() {
-    if (typeof renderContextSection === 'function') {
-      try { await renderContextSection(); } catch (err) { console.warn(err); }
-    } else {
-      // Clear the section so an old context from a prior open doesn't linger.
-      if (reviewContextSection) {
-        while (reviewContextSection.firstChild) reviewContextSection.removeChild(reviewContextSection.firstChild);
-      }
-    }
-  }
-
   async function openReview(slideId) {
     if (!reviewModal) return;
     currentSlideId = slideId;
@@ -1942,9 +1939,8 @@
       currentSlideId = slide.id;
 
       reviewFilename.value = slide.proposed_name || '';
-      reviewFilenameHint.textContent = slide.proposed_name ? 'Sugestão IA' : 'Sem sugestão';
+      reviewFilenameHint.textContent = slide.proposed_name ? 'Leitura do OCR — confirme ou corrija' : 'Sem leitura — digite o nome da etiqueta';
       validateFilename();
-      await safeRenderContextSection();
 
       loadImage(currentSlideId, currentImageWhich);
       reviewModal.classList.remove('hidden');
@@ -1960,15 +1956,14 @@
     reviewConfirm.disabled = !ok;
     if (reviewFilenameError) {
       reviewFilenameError.classList.toggle('hidden', ok);
-      if (!ok) reviewFilenameError.textContent = 'Formato esperado: AP/PA/IM/C + 6-12 dígitos + opcional letra/dígitos';
+      if (!ok) reviewFilenameError.textContent = 'Formato: AP26000388A1, C26000588A ou abreviado 26-388A (3+ dígitos após o traço)';
     }
     return ok;
   }
 
   if (reviewFilename) {
-    reviewFilename.addEventListener('input', async () => {
+    reviewFilename.addEventListener('input', () => {
       validateFilename();
-      await safeRenderContextSection();
     });
   }
 
@@ -1991,178 +1986,6 @@
     });
   }
 
-  // === Review queue: context form helpers (Task 14) ================
-  const SUBTIPO_SUGGESTIONS = [
-    'biopsia_pele', 'biopsia_gastrica', 'biopsia_intestinal',
-    'biopsia_prostatica', 'biopsia_mamaria', 'biopsia_hepatica',
-    'citologia_cervical', 'citologia_urinaria', 'puncao_aspirativa',
-  ];
-
-  function examTypeFromCaseBase(caseBase) {
-    if (!caseBase) return '';
-    if (caseBase.startsWith('C')) return 'CITO';
-    return 'AP';
-  }
-
-  function caseBaseFromInput(value) {
-    const v = (value || '').toUpperCase().replace(/[\s\-_.]/g, '');
-    const m = v.match(/^((?:AP|PA|IM|C)\d{6,12})/);
-    if (!m) return null;
-    return m[1].replace(/^PA/, 'AP');
-  }
-
-  function makeField(labelText, inputEl, hintText) {
-    const label = document.createElement('label');
-    label.className = 'review-field';
-    const span = document.createElement('span');
-    span.textContent = labelText;
-    label.appendChild(span);
-    label.appendChild(inputEl);
-    if (hintText) {
-      const small = document.createElement('small');
-      small.textContent = hintText;
-      label.appendChild(small);
-    }
-    return label;
-  }
-
-  function buildExistingContextBlock(caseBase, ctx) {
-    const wrap = document.createElement('div');
-    wrap.className = 'context-existing';
-
-    const heading = document.createElement('strong');
-    heading.textContent = `Contexto já preenchido para ${caseBase}`;
-    wrap.appendChild(heading);
-
-    const details = document.createElement('details');
-    const summary = document.createElement('summary');
-    summary.textContent = 'Ver contexto';
-    details.appendChild(summary);
-
-    const dl = document.createElement('dl');
-    const rows = [
-      ['examType', ctx.exam_type],
-      ['subtipo', ctx.subtipo],
-      ['sexo / idade', `${ctx.sexo} · ${ctx.idade}a`],
-      ['material', ctx.material],
-      ['hipótese', ctx.hipotese || '(vazio)'],
-    ];
-    for (const [k, v] of rows) {
-      const dt = document.createElement('dt'); dt.textContent = k;
-      const dd = document.createElement('dd'); dd.textContent = v;
-      dl.appendChild(dt); dl.appendChild(dd);
-    }
-    details.appendChild(dl);
-    wrap.appendChild(details);
-    return wrap;
-  }
-
-  function buildNewContextForm(caseBase) {
-    const wrap = document.createElement('div');
-    wrap.className = 'context-form';
-
-    const heading = document.createElement('strong');
-    heading.textContent = `Contexto do caso ${caseBase} · novo`;
-    wrap.appendChild(heading);
-
-    const grid = document.createElement('div');
-    grid.className = 'context-grid';
-
-    const examSelect = document.createElement('select');
-    examSelect.id = 'ctxExamType';
-    for (const v of ['AP', 'CITO']) {
-      const opt = document.createElement('option');
-      opt.value = v; opt.textContent = v;
-      if (v === examTypeFromCaseBase(caseBase)) opt.selected = true;
-      examSelect.appendChild(opt);
-    }
-    grid.appendChild(makeField('examType', examSelect));
-
-    const sexoSelect = document.createElement('select');
-    sexoSelect.id = 'ctxSexo';
-    for (const v of ['F', 'M', 'outro']) {
-      const opt = document.createElement('option');
-      opt.value = v; opt.textContent = v;
-      sexoSelect.appendChild(opt);
-    }
-    grid.appendChild(makeField('sexo', sexoSelect));
-
-    const idadeInput = document.createElement('input');
-    idadeInput.type = 'number'; idadeInput.min = '0'; idadeInput.max = '130';
-    idadeInput.id = 'ctxIdade';
-    grid.appendChild(makeField('idade', idadeInput));
-
-    wrap.appendChild(grid);
-
-    const subtipoInput = document.createElement('input');
-    subtipoInput.type = 'text'; subtipoInput.id = 'ctxSubtipo';
-    subtipoInput.setAttribute('list', 'subtipoSugestoes');
-    subtipoInput.placeholder = 'ex: biopsia_pele';
-    wrap.appendChild(makeField('subtipo', subtipoInput));
-
-    let datalist = document.getElementById('subtipoSugestoes');
-    if (!datalist) {
-      datalist = document.createElement('datalist');
-      datalist.id = 'subtipoSugestoes';
-      for (const s of SUBTIPO_SUGGESTIONS) {
-        const opt = document.createElement('option');
-        opt.value = s;
-        datalist.appendChild(opt);
-      }
-      document.body.appendChild(datalist);
-    }
-
-    const materialTa = document.createElement('textarea');
-    materialTa.id = 'ctxMaterial'; materialTa.rows = 2;
-    materialTa.placeholder = 'ex: Biópsia de pele - região torácica';
-    wrap.appendChild(makeField('material', materialTa));
-
-    const hipoteseTa = document.createElement('textarea');
-    hipoteseTa.id = 'ctxHipotese'; hipoteseTa.rows = 2;
-    hipoteseTa.placeholder = 'Suspeita clínica';
-    wrap.appendChild(makeField('hipótese (opcional)', hipoteseTa));
-
-    return wrap;
-  }
-
-  async function renderContextSection() {
-    if (!reviewContextSection || !reviewFilename) return;
-    const caseBase = caseBaseFromInput(reviewFilename.value);
-    clearChildren(reviewContextSection);
-    if (!caseBase) return;
-
-    try {
-      const r = await fetch(`/v1/case-contexts/${encodeURIComponent(caseBase)}`);
-      if (r.status === 200) {
-        const ctx = await r.json();
-        reviewContextSection.appendChild(buildExistingContextBlock(caseBase, ctx));
-      } else {
-        reviewContextSection.appendChild(buildNewContextForm(caseBase));
-      }
-    } catch (err) {
-      console.warn('Failed to render context section:', err);
-      reviewContextSection.appendChild(buildNewContextForm(caseBase));
-    }
-  }
-
-  function readContextFromForm() {
-    const subtipo = document.getElementById('ctxSubtipo');
-    if (!subtipo) return null; // existing-context view, nothing to send
-    const material = document.getElementById('ctxMaterial').value.trim();
-    const idade = parseInt(document.getElementById('ctxIdade').value, 10);
-    if (!subtipo.value.trim() || !material || !Number.isFinite(idade)) {
-      throw new Error('Preencha examType, subtipo, sexo, idade e material.');
-    }
-    return {
-      exam_type: document.getElementById('ctxExamType').value,
-      subtipo: subtipo.value.trim(),
-      sexo: document.getElementById('ctxSexo').value,
-      idade,
-      material,
-      hipotese: document.getElementById('ctxHipotese').value.trim() || null,
-    };
-  }
-
   // === Review queue: confirm / rescan wiring (Task 14) =============
   async function loadNextOrClose() {
     try {
@@ -2180,24 +2003,18 @@
   if (reviewConfirm) {
     reviewConfirm.addEventListener('click', async () => {
       if (!validateFilename()) return;
-      let clinicalContext = null;
-      try {
-        clinicalContext = readContextFromForm();
-      } catch (err) {
-        alert(err.message);
-        return;
-      }
       reviewConfirm.disabled = true;
       try {
         const res = await fetch(`/v1/pending-slides/${encodeURIComponent(currentSlideId)}/confirm`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            filename: reviewFilename.value.trim().toUpperCase(),
-            clinicalContext: clinicalContext || undefined,
-          }),
+          body: JSON.stringify({ filename: reviewFilename.value.trim().toUpperCase() }),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        fetchSlides();
         await loadNextOrClose();
       } catch (err) {
         alert(`Erro ao confirmar: ${err.message}`);

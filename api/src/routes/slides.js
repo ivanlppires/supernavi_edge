@@ -128,6 +128,7 @@ export default async function slidesRoutes(fastify) {
         mpp: s.mpp || null,            // Microns per pixel
         createdAt: s.created_at,
         ocrStatus: s.ocr_status || null,
+        reviewStatus: s.review_status || null,   // pending = OCR proposal/no name awaiting a person
         externalCaseBase: s.external_case_base || null,
         externalSlideLabel: s.external_slide_label || null,
         hasLabel: !!s.dsmeta_path,
