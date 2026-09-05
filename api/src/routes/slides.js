@@ -8,6 +8,7 @@ import { enqueueJob } from '../lib/queue.js';
 import { query } from '../db/index.js';
 import { parseSlideName, validateSlideName } from '../lib/slide-name-parser.js';
 import { parseCaseBase } from '../lib/case-plausibility.js';
+import { resolveLabelImagePath } from '../lib/label-image.js';
 import { stat } from 'fs/promises';
 import { pipelineLog } from '../services/pipeline-log.js';
 
@@ -407,27 +408,25 @@ export default async function slidesRoutes(fastify) {
     };
   });
 
-  // Get slide label image (from dsmeta directory)
+  // Label photo of the slide: derived copy first, original .dsmeta photo as fallback
   fastify.get('/slides/:slideId/label', async (request, reply) => {
     const { slideId } = request.params;
     const slide = await getSlide(slideId);
 
-    if (!slide || !slide.dsmeta_path) {
+    if (!slide) {
       reply.code(404);
-      return { error: 'Label not found' };
+      return { error: 'Slide not found' };
     }
 
-    const labelPath = join(slide.dsmeta_path, 'label.jpg');
-
-    try {
-      await access(labelPath);
-      reply.header('Content-Type', 'image/jpeg');
-      reply.header('Cache-Control', 'no-cache');
-      return createReadStream(labelPath);
-    } catch {
+    const labelPath = await resolveLabelImagePath(DERIVED_DIR, slideId, slide.dsmeta_path);
+    if (!labelPath) {
       reply.code(404);
       return { error: 'Label image not found' };
     }
+
+    reply.header('Content-Type', 'image/jpeg');
+    reply.header('Cache-Control', 'private, max-age=3600');
+    return createReadStream(labelPath);
   });
 
   // Get slide2 overview image (from dsmeta directory)
