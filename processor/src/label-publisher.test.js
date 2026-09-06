@@ -14,6 +14,14 @@ describe('bigtiffPrefix', () => {
     assert.equal(bigtiffPrefix(''), null);
     assert.equal(bigtiffPrefix('slide.tif'), null);
   });
+  it('falls back to the canonical slides/{slideId}/ prefix when the key was never persisted', () => {
+    // uploadBigTIFF returns no bigtiffKey when the cloud already had the slide
+    // (ALREADY_READY), so s3_bigtiff_key stays null for re-uploaded slides.
+    assert.equal(bigtiffPrefix(null, 'abc123'), 'slides/abc123/');
+    assert.equal(bigtiffPrefix('', 'abc123'), 'slides/abc123/');
+    assert.equal(bigtiffPrefix('slides/other/slide.tif', 'abc123'), 'slides/other/');
+    assert.equal(bigtiffPrefix(null, ''), null);
+  });
 });
 
 describe('buildBigtiffPublishedPayload', () => {
