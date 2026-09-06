@@ -563,7 +563,7 @@
     // Standard format: AP26000388A1
     const cleaned = trimmed.replace(/[\s\-_.]/g, '');
     if (!cleaned) return null;
-    const match = cleaned.match(/^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i);
+    const match = cleaned.match(/^((?:AP|PA|IM|C|RE)\d{6,12})([A-Z]\d*)?$/i);
     if (!match) return null;
     const caseBase = match[1].replace(/^PA/, 'AP');
     const slideLabel = match[2] || '';
@@ -1885,7 +1885,7 @@
   let currentImageWhich = 'label';
 
   // Full form or the handwritten abbreviated form (3+ digits after the separator)
-  const FILENAME_RE = /^((AP|PA|IM|C)\d{6,12}[A-Z]?\d*|\d{2}[-_]\d{3,6}[A-Z]?\d*)$/i;
+  const FILENAME_RE = /^((AP|PA|IM|C|RE)\d{6,12}[A-Z]?\d*|\d{2}[-_]\d{3,6}[A-Z]?\d*)$/i;
 
   function loadImage(slideId, which) {
     if (!reviewImage || !reviewImageEmpty) return;

@@ -18,6 +18,15 @@ describe('parseSlideName — full form', () => {
     });
   });
 
+  it('parses RE (revisão externa: slide from another lab registered in PathoWeb as RE)', () => {
+    assert.deepStrictEqual(parseSlideName('RE26000003'), {
+      fullName: 'RE26000003', caseBase: 'RE26000003', slideLabel: '',
+    });
+    assert.deepStrictEqual(parseSlideName('re26000003a'), {
+      fullName: 'RE26000003A', caseBase: 'RE26000003', slideLabel: 'A',
+    });
+  });
+
   it('normalizes PA → AP, lowercase, whitespace and separators', () => {
     assert.deepStrictEqual(parseSlideName('pa26000019a1'), {
       fullName: 'AP26000019A1', caseBase: 'AP26000019', slideLabel: 'A1',

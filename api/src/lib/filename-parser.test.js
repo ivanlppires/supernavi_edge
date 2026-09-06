@@ -23,6 +23,21 @@ describe('parsePathologyFilename', () => {
     });
   });
 
+  it('parses RE filename (revisão externa)', () => {
+    assert.deepStrictEqual(parsePathologyFilename('RE26000003.svs'), {
+      caseBase: 'RE26000003',
+      label: '1',
+      externalCaseId: 'pathoweb:RE26000003',
+      externalCaseBase: 'RE26000003',
+    });
+    assert.deepStrictEqual(parsePathologyFilename('RE26000003A.svs'), {
+      caseBase: 'RE26000003',
+      label: 'A',
+      externalCaseId: 'pathoweb:RE26000003',
+      externalCaseBase: 'RE26000003',
+    });
+  });
+
   it('parses IM filename with suffix', () => {
     const result = parsePathologyFilename('IM26000100B2.svs');
     assert.deepStrictEqual(result, {

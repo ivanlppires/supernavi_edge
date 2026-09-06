@@ -1,6 +1,6 @@
 {
   "name": "supernavi-processor",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "SuperNavi WSI Processor Worker",
   "type": "module",
   "main": "src/worker.js",

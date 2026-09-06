@@ -5,7 +5,8 @@
  * label-ocr.js; the OCR call itself is gone.
  *
  * Accepted formats:
- *   Full:        AP26000388A1, PA26000019 (PA → AP), C26000588A, IM26000100B2
+ *   Full:        AP26000388A1, PA26000019 (PA → AP), C26000588A, IM26000100B2,
+ *                RE26000003 (revisão externa: slide from another lab, numbered by the clinic)
  *   Abbreviated: 26-388A / 26_388A — the separator stands for suppressed zeros
  *                and the right side needs 3 to 6 digits. "26-2" is rejected:
  *                on 2026-09-04 a truncated "26-2" became AP26000002, another
@@ -17,13 +18,13 @@
 
 import { isImplausiblyLowCaseNumber } from './case-plausibility.js';
 
-const FULL_REGEX = /^((?:AP|PA|IM|C)\d{6,12})([A-Z]\d*)?$/i;
+const FULL_REGEX = /^((?:AP|PA|IM|C|RE)\d{6,12})([A-Z]\d*)?$/i;
 const ABBREVIATED_REGEX = /^(\d{2})[-_](\d{3,6})([A-Z]\d*)?$/i;
 const DIGIT_CORRECTIONS = { '9': '2', '2': '9' };
 const CASE_DIGITS = 8;
 
 export const INVALID_FORMAT_MESSAGE =
-  'Formato inválido. Use o nome completo (AP26000388A1, C26000588A) ou abreviado com pelo menos 3 dígitos após o traço (26-388A).';
+  'Formato inválido. Use o nome completo (AP26000388A1, C26000588A, RE26000003) ou abreviado com pelo menos 3 dígitos após o traço (26-388A).';
 
 function correctYear(yearStr) {
   const currentYear = new Date().getFullYear() % 100;

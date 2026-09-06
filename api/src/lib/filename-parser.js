@@ -1,7 +1,8 @@
 /**
  * Pathology filename parser for PathoWeb integration.
  *
- * Extracts case base (AP/PA/IM/C number) and slide label from filenames.
+ * Extracts case base (AP/PA/IM/C/RE number) and slide label from filenames.
+ * RE = revisão externa: slide from another lab, numbered by the clinic in PathoWeb.
  * PA (Patologia Anatômica) is normalized to AP (Anatomopatológico).
  * C is for cytology and remains as C.
  *
@@ -17,7 +18,7 @@
  *   random_file.svs          -> null
  */
 
-const CASE_BASE_REGEX = /^((?:AP|PA|IM|C)[\s\-_.]*\d{6,12})/i;
+const CASE_BASE_REGEX = /^((?:AP|PA|IM|C|RE)[\s\-_.]*\d{6,12})/i;
 
 /**
  * Normalize a string by removing common separators (space, dash, underscore, dot).
@@ -43,7 +44,7 @@ export function parsePathologyFilename(filename) {
   const normalized = removeSeparators(nameWithoutExt);
 
   // Match case base pattern
-  const match = normalized.match(/^((?:AP|PA|IM|C)\d{6,12})/i);
+  const match = normalized.match(/^((?:AP|PA|IM|C|RE)\d{6,12})/i);
   if (!match) return null;
 
   // Normalize PA → AP (same department, different label convention)

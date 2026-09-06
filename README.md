@@ -524,6 +524,9 @@ para OCR e para nomes digitados:
    que não passe no parser = sem nome (lâmina pendente).
 2. Forma abreviada exige **3+ dígitos** após o traço (`26-2` recusado). Parser
    único em `api/src/lib/slide-name-parser.js`.
+   Prefixos aceitos: `AP` (`PA` → `AP`), `C`, `IM` e `RE` (revisão externa:
+   lâmina de outro laboratório, numerada pela clínica no PathoWeb, ex.
+   `RE26000003`). Só a forma abreviada assume `AP`.
 3. Número muito abaixo dos casos recentes (menos de 1/10 do maior caso dos
    últimos 120 dias, `case-plausibility.js`) é descartado/recusado.
 4. Nome não confirmado nunca vincula a caso na cloud (`name_confirmed`).
