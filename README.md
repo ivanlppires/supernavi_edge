@@ -554,6 +554,20 @@ Lâminas enviadas antes desta versão: Configurações → Manutenção →
 `LABEL_PUBLISH` que copia a foto, envia e reemite `preview/published` com
 `label_key`.
 
+## Dashboard
+
+O dashboard (`api/src/dashboard/`) é HTML, CSS e JS estáticos servidos pela API.
+Identidade visual: `tokens.css` (cores e tipografia derivadas do logo, fonte
+Atkinson Hyperlegible Next hospedada em `fonts/`) e `dashboard.css` (componentes).
+Spec e plano: `docs/superpowers/specs/2026-09-06-edge-visual-identity-design.md`
+e `docs/superpowers/plans/2026-09-06-edge-visual-identity.md`.
+
+Seções: Visão geral (fila de revisão, blocos de serviços, lâminas recentes),
+Lâminas, Revisão, Falhas, Atividade, Configurações.
+
+Para revisar a interface sem o stack: `node scripts/dashboard-mock.js 8099 normal`
+(cenários `normal`, `falhas`, `vazio`) e abrir `http://127.0.0.1:8099/`.
+
 ## Testes
 
 ```bash
