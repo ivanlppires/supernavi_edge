@@ -12,7 +12,7 @@ import { generateBigTIFF, cleanupBigTIFF, checkDiskSpace, calculateParallelSlots
 import { uploadBigTIFF } from './bigtiff-uploader.js';
 import { getEdgeKey, getCloudApiUrl } from './lib/config-reader.js';
 import { pipelineLog } from './lib/pipeline-log.js';
-import { copyLabelFromDsmeta } from './lib/label-asset.js';
+import { copyLabelFromDsmeta, labelPhotoCandidates } from './lib/label-asset.js';
 import { uploadLabelPhoto, bigtiffPrefix, buildBigtiffPublishedPayload } from './label-publisher.js';
 import { readFileSync } from 'fs';
 
@@ -183,6 +183,20 @@ async function processP1(job) {
 }
 
 /**
+ * slides.dsmeta_path for a slide (null when unknown). The label photo is looked
+ * up there first: re-ingested slides keep raw_path in /data/raw while the
+ * .dsmeta folder stays in the scanner tree.
+ */
+async function slideDsmetaPath(slideId) {
+  try {
+    const r = await getPool().query('SELECT dsmeta_path FROM slides WHERE id = $1', [slideId]);
+    return r.rows[0]?.dsmeta_path || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * LABEL_PUBLISH: send the Motic label photo of an already-uploaded BigTIFF slide
  * to the cloud (backfill for slides processed before label support). Copies the
  * photo from .dsmeta if needed, uploads it next to thumb.jpg and re-emits
@@ -193,7 +207,7 @@ async function processLabelPublish(job) {
   const tag = `[LABEL] ${slideId.substring(0, 12)}`;
   try {
     const r = await getPool().query(
-      `SELECT id, raw_path, pipeline_mode, s3_bigtiff_key, bigtiff_size, cloud_upload_status,
+      `SELECT id, raw_path, dsmeta_path, pipeline_mode, s3_bigtiff_key, bigtiff_size, cloud_upload_status,
               width, height, max_level, external_case_id, external_case_base, external_slide_label
          FROM slides WHERE id = $1`,
       [slideId]
@@ -203,18 +217,26 @@ async function processLabelPublish(job) {
       console.warn(`${tag} slide not found`);
       return;
     }
-    if (slide.pipeline_mode !== 'bigtiff_iiif' || !slide.s3_bigtiff_key || slide.cloud_upload_status !== 'done') {
+    if (slide.pipeline_mode !== 'bigtiff_iiif' || slide.cloud_upload_status !== 'done') {
       await logEvent(slideId, 'preview', 'info', 'Label publish skipped: slide is not an uploaded BigTIFF slide');
       return;
     }
 
-    const labelPath = await copyLabelFromDsmeta(slideId, slide.raw_path);
+    const labelPath = await copyLabelFromDsmeta(slideId, slide.raw_path, undefined, slide.dsmeta_path);
     if (!labelPath) {
-      await logEvent(slideId, 'preview', 'info', 'No label photo for this slide (.dsmeta/label.jpg not found)');
+      const tried = labelPhotoCandidates(slide.raw_path, slide.dsmeta_path);
+      await logEvent(slideId, 'preview', 'info',
+        `No label photo for this slide (tried: ${tried.length ? tried.join(', ') : 'no raw_path/dsmeta_path recorded'})`);
       return;
     }
 
-    const s3Prefix = bigtiffPrefix(slide.s3_bigtiff_key);
+    const s3Prefix = bigtiffPrefix(slide.s3_bigtiff_key, slideId);
+    if (!slide.s3_bigtiff_key) {
+      // Re-uploaded slides (ALREADY_READY) never got their key persisted; record
+      // the canonical one so the payload and later jobs carry it.
+      slide.s3_bigtiff_key = `${s3Prefix}slide.tif`;
+      await updateSlide(slideId, { s3_bigtiff_key: slide.s3_bigtiff_key });
+    }
     const labelKey = await uploadLabelPhoto(slideId, s3Prefix);
     if (!labelKey) {
       await logEvent(slideId, 'preview', 'warn', 'Label photo upload to the cloud failed');
@@ -444,7 +466,7 @@ async function processJob(job) {
           await generateThumbnail(rawPath, thumbPath);
         }
         if (rawPath) {
-          await copyLabelFromDsmeta(job.slideId, rawPath);
+          await copyLabelFromDsmeta(job.slideId, rawPath, undefined, await slideDsmetaPath(job.slideId));
         }
 
         // Optionally delete marker to force re-upload
@@ -698,7 +720,7 @@ async function processJob(job) {
         // Phase 1: Generate BigTIFF
         console.log(`[BIGTIFF] Starting pipeline for ${job.slideId.substring(0, 12)} (mode: bigtiff_iiif)`);
         // Slides processed before label support get their photo copied here (reprocess)
-        await copyLabelFromDsmeta(job.slideId, job.rawPath);
+        await copyLabelFromDsmeta(job.slideId, job.rawPath, undefined, await slideDsmetaPath(job.slideId));
         const genResult = await generateBigTIFF(job.slideId, job.rawPath);
 
         await updateSlide(job.slideId, { bigtiff_size: genResult.size });

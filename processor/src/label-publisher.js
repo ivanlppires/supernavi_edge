@@ -15,12 +15,21 @@ import { findLabelPath } from './lib/label-asset.js';
 /**
  * S3 prefix of a BigTIFF slide from its slide.tif key:
  * slides/{slideId}/slide.tif → slides/{slideId}/
+ *
+ * `s3_bigtiff_key` is null for slides whose upload ended in ALREADY_READY (the
+ * cloud already had the file, so uploadBigTIFF returned no key). The cloud
+ * always lays BigTIFF slides out as slides/{slideId}/, so when a slideId is
+ * given that canonical prefix is used instead.
+ *
  * @param {string|null|undefined} s3BigtiffKey
+ * @param {string} [slideId]
  * @returns {string|null}
  */
-export function bigtiffPrefix(s3BigtiffKey) {
-  if (!s3BigtiffKey || typeof s3BigtiffKey !== 'string' || !s3BigtiffKey.includes('/')) return null;
-  return dirname(s3BigtiffKey) + '/';
+export function bigtiffPrefix(s3BigtiffKey, slideId) {
+  if (s3BigtiffKey && typeof s3BigtiffKey === 'string' && s3BigtiffKey.includes('/')) {
+    return dirname(s3BigtiffKey) + '/';
+  }
+  return slideId ? `slides/${slideId}/` : null;
 }
 
 /**

@@ -29,26 +29,47 @@ export async function findLabelPath(slideId, derivedDir = DEFAULT_DERIVED_DIR) {
 }
 
 /**
- * Copy `${rawPath}.dsmeta/label.jpg` into derived/{slideId}/label.jpg.
+ * Candidate locations of the original Motic photo, in order:
+ *   1. `${dsmetaDir}/label.jpg` — the folder recorded in slides.dsmeta_path at
+ *      registration (survives a re-ingest that moved raw_path into /data/raw)
+ *   2. `${rawPath}.dsmeta/label.jpg` — the folder Motic writes next to the SVS
+ *
+ * @param {string|null|undefined} rawPath
+ * @param {string|null|undefined} dsmetaDir
+ * @returns {string[]}
+ */
+export function labelPhotoCandidates(rawPath, dsmetaDir) {
+  const candidates = [];
+  if (dsmetaDir) candidates.push(join(dsmetaDir, 'label.jpg'));
+  if (rawPath) candidates.push(`${rawPath}.dsmeta/label.jpg`);
+  return candidates;
+}
+
+/**
+ * Copy the Motic label photo into derived/{slideId}/label.jpg.
  * Idempotent; never throws.
  *
  * @param {string} slideId
  * @param {string|null|undefined} rawPath path of the SVS as registered
  * @param {string} [derivedDir]
+ * @param {string|null} [dsmetaDir] slides.dsmeta_path when known
  * @returns {Promise<string|null>} path of the derived copy, or null
  */
-export async function copyLabelFromDsmeta(slideId, rawPath, derivedDir = DEFAULT_DERIVED_DIR) {
-  if (!rawPath) return null;
-
+export async function copyLabelFromDsmeta(slideId, rawPath, derivedDir = DEFAULT_DERIVED_DIR, dsmetaDir = null) {
   const existing = await findLabelPath(slideId, derivedDir);
   if (existing) return existing;
 
-  const source = `${rawPath}.dsmeta/label.jpg`;
-  try {
-    await access(source);
-  } catch {
-    return null;
+  let source = null;
+  for (const candidate of labelPhotoCandidates(rawPath, dsmetaDir)) {
+    try {
+      await access(candidate);
+      source = candidate;
+      break;
+    } catch {
+      // try the next location
+    }
   }
+  if (!source) return null;
 
   const dest = join(derivedDir, slideId, 'label.jpg');
   try {
