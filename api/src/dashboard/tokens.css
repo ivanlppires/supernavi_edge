@@ -1,0 +1,90 @@
+/* SuperNavi design tokens. Only variables and @font-face live here.
+   Spec: docs/superpowers/specs/2026-09-06-edge-visual-identity-design.md (§3) */
+
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/atkinson-hyperlegible-next-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/atkinson-hyperlegible-next-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/atkinson-hyperlegible-next-700.woff2") format("woff2");
+}
+
+:root {
+  /* Brand (sampled from the logo) */
+  --sn-petroleo: #003858;
+  --sn-azul: #3890D0;
+  --sn-grafite: #304048;
+  --sn-prata: #B8B8C0;
+  --sn-papel: #F4F7FA;
+
+  /* States */
+  --sn-ok: #35B37A;
+  --sn-atencao: #E0A33A;
+  --sn-falha: #E25C5C;
+  --sn-ok-bg: rgba(53, 179, 122, 0.14);
+  --sn-atencao-bg: rgba(224, 163, 58, 0.14);
+  --sn-falha-bg: rgba(226, 92, 92, 0.14);
+  --sn-azul-bg: rgba(56, 144, 208, 0.14);
+
+  /* Dark scale (petróleo darkened) */
+  --sn-fundo: #071A28;
+  --sn-painel: #0B2436;
+  --sn-cartao: #10334A;
+  --sn-realce: #1A4460;
+  --sn-borda: rgba(184, 184, 192, 0.14);
+  --sn-texto: #E6EEF5;
+  --sn-texto-2: #9FB3C4;
+  --sn-texto-3: #6E8496;
+  --sn-sombra: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --sn-veu: rgba(7, 26, 40, 0.7);
+
+  /* Type */
+  --sn-fonte: "Atkinson Hyperlegible Next", system-ui, "Segoe UI", sans-serif;
+  --sn-t-grande: 32px;
+  --sn-t-pagina: 22px;
+  --sn-t-secao: 18px;
+  --sn-t-id: 15px;
+  --sn-t-corpo: 14px;
+  --sn-t-lista: 13px;
+
+  /* Spacing */
+  --sn-esp-1: 4px;
+  --sn-esp-2: 8px;
+  --sn-esp-3: 12px;
+  --sn-esp-4: 16px;
+  --sn-esp-5: 24px;
+  --sn-esp-6: 32px;
+  --sn-esp-7: 48px;
+
+  /* Radius */
+  --sn-raio-controle: 6px;
+  --sn-raio-cartao: 10px;
+  --sn-raio-bloco: 12px;
+
+  /* Motion */
+  --sn-mov: 240ms ease;
+
+  /* Layout */
+  --sn-cabecalho: 56px;
+  --sn-trilho: 200px;
+  --sn-trilho-min: 56px;
+  --sn-conteudo-max: 1180px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --sn-mov: 0ms; }
+}
