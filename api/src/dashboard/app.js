@@ -18,6 +18,8 @@
   let slidesData = [];
   let eventSource = null;
   let dashboardTimer = null;
+  // Assigned inside the review-queue block; the tab router calls it.
+  let refreshPending = async () => {};
 
   // ---- DOM references (cached after DOMContentLoaded) ----
   const $ = (sel) => document.querySelector(sel);
@@ -26,26 +28,23 @@
   // =====================
   //  Tab Navigation
   // =====================
+  function activateTab(tabId) {
+    $$('.tab-btn').forEach((b) => b.classList.toggle('active', b.dataset.tab === tabId));
+    $$('.tab-panel').forEach((p) => p.classList.toggle('active', p.id === 'panel-' + tabId));
+    if (tabId === 'slides') fetchSlides();
+    if (tabId === 'settings') loadSettings();
+    if (tabId === 'failures') fetchFailures();
+    if (tabId === 'review') refreshPending();
+  }
+
   function initTabs() {
-    const tabBar = $('#tabBar');
-    tabBar.addEventListener('click', (e) => {
+    $('#tabBar').addEventListener('click', (e) => {
       const btn = e.target.closest('.tab-btn');
-      if (!btn) return;
-      const tabId = btn.dataset.tab;
-
-      // Deactivate all
-      $$('.tab-btn').forEach((b) => b.classList.remove('active'));
-      $$('.tab-panel').forEach((p) => p.classList.remove('active'));
-
-      // Activate selected
-      btn.classList.add('active');
-      const panel = $(`#panel-${tabId}`);
-      if (panel) panel.classList.add('active');
-
-      // Lazy-load data for the activated tab
-      if (tabId === 'slides') fetchSlides();
-      if (tabId === 'settings') loadSettings();
-      if (tabId === 'failures') fetchFailures();
+      if (btn) activateTab(btn.dataset.tab);
+    });
+    document.addEventListener('click', (e) => {
+      const goto = e.target.closest('[data-goto]');
+      if (goto) activateTab(goto.dataset.goto);
     });
   }
 
@@ -130,83 +129,65 @@
     }
   }
 
-  function renderDashboard(data) {
-    // Tunnel
+  function capitalize(str) { return str ? str.charAt(0).toUpperCase() + str.slice(1) : ''; }
+
+  function setBlock(id, state, detail) {
+    const wrap = $('#' + id);
+    if (!wrap) return;
+    const block = wrap.querySelector('.block');
+    if (block) block.dataset.state = state;
+    const det = wrap.querySelector('.block-detail');
+    if (det) det.textContent = detail;
+  }
+
+  function setHealthDot(dotSel, textSel, state, label) {
+    const dot = $(dotSel);
+    if (dot) dot.className = 'dot ' + state;
+    setText(textSel, label);
+  }
+
+  function renderBlocks(data) {
     if (data.tunnel) {
-      const connected = data.tunnel.connected;
-      setDotClass('#tunnelDot', connected ? 'connected' : 'disconnected');
-      setText('#tunnelStatusText', connected ? 'Conectado' : 'Desconectado');
-      setText('#tunnelAgent', 'Agent: ' + (data.tunnel.agentId || '--'));
+      const on = !!data.tunnel.connected;
+      setBlock('blk-tunnel', on ? 'ok' : 'falha', on ? 'Agente ' + (data.tunnel.agentId || '--') : 'Sem conex\u00e3o com a nuvem');
+      setHealthDot('#hdrTunnelDot', '#hdrTunnelText', on ? 'ok' : 'falha', on ? 'T\u00fanel' : 'T\u00fanel ca\u00eddo');
+      setText('#hdrAgent', 'Agente ' + (data.tunnel.agentId || '--'));
     }
-
-    // Watcher
+    if (data.scanner) {
+      const sc = data.scanner;
+      let state = 'unknown'; let detail = '--'; let dot = 'unknown'; let label = 'Scanner';
+      if (!sc.enabled) { state = 'atencao'; detail = 'Desligado'; dot = 'atencao'; }
+      else if (sc.state === 'running') { state = 'ok'; detail = capitalize(data.config?.scannerType || 'scanner') + ' \u00b7 ' + (sc.totalDiscovered ?? 0) + ' l\u00e2minas'; dot = 'ok'; }
+      else if (sc.state === 'error') { state = 'falha'; detail = sc.error || 'Erro'; dot = 'falha'; label = 'Scanner com erro'; }
+      else { state = 'atencao'; detail = sc.state || 'Parado'; dot = 'atencao'; }
+      setBlock('blk-scanner', state, detail);
+      setHealthDot('#hdrScannerDot', '#hdrScannerText', dot, label);
+    }
     if (data.watcher) {
-      const state = data.watcher.state;
-      let dotClass = 'disconnected';
-      let label = 'Parado';
-      if (state === 'running') { dotClass = 'connected'; label = 'Executando'; }
-      else if (state === 'needs_config') { dotClass = 'warning'; label = 'Precisa configurar'; }
-      else if (state === 'dir_inaccessible') { dotClass = 'warning'; label = 'Pasta inacess\u00edvel'; }
-      setDotClass('#watcherDot', dotClass);
-      setText('#watcherStatusText', label);
-      setText('#watcherDir', 'Pasta: ' + (data.watcher.ingestDir || data.config?.slidesDirHost || '--'));
+      const w = data.watcher;
+      const map = { running: ['ok', w.ingestDir || 'Monitorando'], needs_config: ['atencao', 'Precisa configurar'], dir_inaccessible: ['falha', 'Pasta inacess\u00edvel'] };
+      const [state, detail] = map[w.state] || ['atencao', 'Parada'];
+      setBlock('blk-watcher', state, detail);
     }
-
-    // DB
     if (data.slides) {
-      setText('#dbSlideCount', 'L\u00e2minas: ' + data.slides.total);
+      setBlock('blk-db', 'ok', data.slides.total + ' l\u00e2minas');
+      const failed = data.slides.failed || 0;
+      setBlock('blk-disk', failed > 0 ? 'atencao' : 'ok', data.slides.ready + ' prontas' + (failed > 0 ? ' \u00b7 ' + failed + ' com erro' : ''));
     }
-
-    // Queue
     if (data.jobs) {
-      setText('#queuePending', 'Pendentes: ' + data.jobs.pending);
-      setText('#queueRunning', 'Executando: ' + data.jobs.running);
+      const total = (data.jobs.pending || 0) + (data.jobs.running || 0);
+      setBlock('blk-queue', total > 0 ? 'azul' : 'ok', total > 0 ? data.jobs.pending + ' na fila \u00b7 ' + data.jobs.running + ' rodando' : 'Vazia');
+      const active = data.jobs.active || [];
+      const job = active[0];
+      setBlock('blk-processor', job ? 'azul' : 'ok', job ? (job.type + ' \u00b7 ' + (job.original_filename || job.slide_id || '').slice(0, 24)) : 'Ocioso');
     }
-
-    // Processor
-    if (data.jobs) {
-      const processorBody = $('#processorBody');
-      clearChildren(processorBody);
-
-      if (data.jobs.active && data.jobs.active.length > 0) {
-        for (const job of data.jobs.active) {
-          const jobDiv = el('div', { className: 'active-job' });
-          const nameDiv = el('div', { className: 'active-job-name' });
-          nameDiv.textContent = job.original_filename || job.slide_id || '--';
-          const typeDiv = el('div', { className: 'active-job-type' });
-          typeDiv.textContent = job.type + ' - ' + job.status;
-          jobDiv.appendChild(nameDiv);
-          jobDiv.appendChild(typeDiv);
-          processorBody.appendChild(jobDiv);
-        }
-      } else {
-        const idleDiv = el('div', { className: 'card-detail' });
-        idleDiv.textContent = 'Ocioso';
-        processorBody.appendChild(idleDiv);
-      }
-    }
-
-    // Disk (slide counts by status)
-    if (data.slides) {
-      setText('#diskReady', 'Prontas: ' + data.slides.ready);
-      setText('#diskProcessing', 'Processando: ' + data.slides.processing);
-      setText('#diskQueued', 'Na fila: ' + data.slides.queued);
-      setText('#diskFailed', 'Com erro: ' + data.slides.failed);
-    }
-
-    // Failures tab badge
-    const totalProblems = (data.slides && data.slides.withProblems) || 0;
-    const stuckSync = (data.sync && data.sync.stuckCount) || 0;
-    const totalIssues = totalProblems + stuckSync;
+    const totalIssues = ((data.slides && data.slides.withProblems) || 0) + ((data.sync && data.sync.stuckCount) || 0);
     const badge = $('#failuresBadge');
-    if (badge) {
-      if (totalIssues > 0) {
-        badge.textContent = String(totalIssues);
-        badge.style.display = '';
-      } else {
-        badge.style.display = 'none';
-      }
-    }
+    if (badge) { badge.textContent = String(totalIssues); badge.style.display = totalIssues > 0 ? '' : 'none'; }
+  }
+
+  function renderDashboard(data) {
+    renderBlocks(data);
   }
 
   function startDashboardPolling() {
@@ -224,6 +205,7 @@
       const data = await res.json();
       slidesData = data.items || [];
       renderSlides();
+      renderRecentSlides();
     } catch (err) {
       console.error('Slides fetch error:', err);
     }
@@ -262,171 +244,84 @@
     }
   }
 
+  function renderRecentSlides() {
+    const recent = $('#recentSlides');
+    if (!recent) return;
+    clearChildren(recent);
+    if (slidesData.length === 0) {
+      const empty = el('p', { className: 'empty' });
+      empty.textContent = 'Nenhuma l\u00e2mina registrada ainda.';
+      recent.appendChild(empty);
+      return;
+    }
+    slidesData.slice(0, 10).forEach((sl) => recent.appendChild(buildSlideCard(sl)));
+  }
+
   function buildSlideCard(slide) {
-    const card = el('div', { className: 'slide-card' });
-    card.setAttribute('data-status', slide.status || 'queued');
-    card.setAttribute('data-slide-id', slide.slideId);
+    const row = el('div', { className: 'row slide-card' });
+    row.setAttribute('data-status', slide.status || 'queued');
+    row.setAttribute('data-slide-id', slide.slideId);
 
-    // Thumbnail
-    const thumb = el('img', { className: 'slide-thumb' });
-    thumb.setAttribute('src', '/v1/slides/' + encodeURIComponent(slide.slideId) + '/thumb');
-    thumb.setAttribute('alt', '');
-    thumb.setAttribute('loading', 'lazy');
-    thumb.addEventListener('error', function () {
-      // Replace broken image with SVG placeholder
-      const placeholder = el('div', { className: 'slide-thumb-placeholder' });
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('viewBox', '0 0 24 24');
-      svg.setAttribute('width', '24');
-      svg.setAttribute('height', '24');
-      svg.setAttribute('fill', 'none');
-      svg.setAttribute('stroke', 'currentColor');
-      svg.setAttribute('stroke-width', '1.5');
-      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      rect.setAttribute('x', '3');
-      rect.setAttribute('y', '3');
-      rect.setAttribute('width', '18');
-      rect.setAttribute('height', '18');
-      rect.setAttribute('rx', '2');
-      rect.setAttribute('ry', '2');
-      const circ = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      circ.setAttribute('cx', '8.5');
-      circ.setAttribute('cy', '8.5');
-      circ.setAttribute('r', '1.5');
-      const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-      poly.setAttribute('points', '21,15 16,10 5,21');
-      svg.appendChild(rect);
-      svg.appendChild(circ);
-      svg.appendChild(poly);
-      placeholder.appendChild(svg);
-      card.replaceChild(placeholder, thumb);
-    });
-    card.appendChild(thumb);
-
-    // Info section
-    const info = el('div', { className: 'slide-info' });
-    const filename = el('div', { className: 'slide-filename' });
-    filename.textContent = slide.originalFilename || '--';
-    info.appendChild(filename);
-
-    const meta = el('div', { className: 'slide-meta' });
-
-    // Format badge
-    const format = (slide.format || 'unknown').toUpperCase();
-    const formatBadge = el('span', { className: 'badge badge-format' });
-    formatBadge.textContent = format;
-    meta.appendChild(formatBadge);
-
-    // Dimensions
-    if (slide.width && slide.height) {
-      const dims = el('span', { className: 'slide-meta-item' });
-      dims.textContent = slide.width + ' \u00d7 ' + slide.height;
-      meta.appendChild(dims);
-    }
-
-    // Magnification
-    if (slide.appMag) {
-      const mag = el('span', { className: 'slide-meta-item' });
-      mag.textContent = slide.appMag + '\u00d7';
-      meta.appendChild(mag);
-    }
-
-    info.appendChild(meta);
-
-    // Identification badge. Pending (OCR reading or no name) → review modal
-    // (photo + reading, confirm/correct/rescan). Otherwise → identify/rename
-    // modal (photos, re-read OCR, manual name).
-    const idRow = el('div', { className: 'slide-ocr' });
     const pendingReview = slide.reviewStatus === 'pending';
     const named = !!slide.externalSlideLabel;
-    const idBadge = el('span', { className: 'ocr-badge ' + ((pendingReview || !named) ? 'ocr-pending' : 'ocr-done') });
-    if (pendingReview) {
-      idBadge.textContent = named ? 'Confirmar: ' + slide.externalSlideLabel : 'Sem leitura \u2014 identificar';
-      idBadge.title = 'Revisar a leitura da etiqueta';
-    } else {
-      idBadge.textContent = named ? slide.externalSlideLabel : 'Sem identifica\u00e7\u00e3o';
-      idBadge.title = 'Ver a etiqueta / renomear';
-    }
-    idBadge.classList.add('clickable');
-    idBadge.addEventListener('click', (e) => {
+    const idCell = el('button', { className: 'row-id btn-link' + (named ? '' : ' sem-nome'), type: 'button' });
+    idCell.textContent = named ? slide.externalSlideLabel : 'Sem identifica\u00e7\u00e3o';
+    idCell.title = pendingReview ? 'Leitura do OCR, aguardando confirma\u00e7\u00e3o' : 'Renomear';
+    idCell.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (pendingReview) {
+      if (pendingReview || !named) {
         document.dispatchEvent(new CustomEvent('open-review-modal', { detail: { slideId: slide.slideId } }));
       } else {
         openOcrModal(slide);
       }
     });
-    idRow.appendChild(idBadge);
-    info.appendChild(idRow);
+    row.appendChild(idCell);
 
-    card.appendChild(info);
+    const file = el('div', { className: 'row-file' });
+    file.textContent = slide.originalFilename || '--';
+    file.title = (slide.width && slide.height) ? slide.width + ' \u00d7 ' + slide.height + (slide.appMag ? ' \u00b7 ' + slide.appMag + '\u00d7' : '') : '';
+    row.appendChild(file);
 
-    // Right section: status + time + reprocess button
-    const right = el('div', { className: 'slide-right' });
+    const chipClass = { ready: 'chip-ok', processing: 'chip-azul', queued: 'chip-atencao', failed: 'chip-falha' }[slide.status] || '';
+    const chip = el('span', { className: 'chip badge badge-' + (slide.status || 'queued') + ' ' + chipClass });
+    chip.textContent = pendingReview && slide.status === 'ready' ? 'pronta \u00b7 confirmar nome' : statusLabel(slide.status);
+    row.appendChild(chip);
 
-    const statusBadge = el('span', { className: 'badge badge-' + (slide.status || 'queued') });
-    statusBadge.textContent = statusLabel(slide.status);
-    right.appendChild(statusBadge);
-
-    const time = el('span', { className: 'slide-time' });
+    const time = el('span', { className: 'row-time' });
     time.textContent = relativeTime(slide.createdAt);
-    right.appendChild(time);
+    row.appendChild(time);
 
-    // Problem indicator (alert icon) — visible when slide has any pipeline issue
-    const hasProblem =
-      slide.status === 'failed' ||
-      slide.latestError ||
-      slide.cloudUploadStatus === 'failed' ||
-      slide.tilegenStatus === 'failed';
-    if (hasProblem) {
-      const alertBtn = el('button', { className: 'slide-alert-btn' });
-      alertBtn.title = slide.latestError || 'Lâmina com problema — clique para ver detalhes';
-      alertBtn.setAttribute('aria-label', 'Ver detalhes do erro');
-      alertBtn.textContent = 'Ver erro';
-      alertBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openPipelineModal(slide.slideId, slide.originalFilename);
-      });
-      right.appendChild(alertBtn);
-    }
-
-    // Action buttons row
-    const actions = el('div', { className: 'slide-actions' });
-
-    // Re-process button: show for ready/failed WSI slides that have a raw file
-    const isWSI = ['svs', 'tiff', 'ndpi', 'mrxs'].includes((slide.format || '').toLowerCase());
-    const canReprocess = isWSI && slide.hasRawFile && ['ready', 'failed'].includes(slide.status);
-    if (canReprocess) {
-      const btn = el('button', { className: 'btn-reprocess' });
-      btn.textContent = 'Re-processar';
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        reprocessSlide(slide.slideId, btn);
-      });
+    const actions = el('div', { className: 'row-actions' });
+    const tl = el('button', { className: 'btn', type: 'button' });
+    tl.textContent = 'Timeline';
+    tl.addEventListener('click', (e) => { e.stopPropagation(); openPipelineModal(slide.slideId, slide.originalFilename); });
+    actions.appendChild(tl);
+    if (slide.status === 'failed' || slide.latestError) {
+      const btn = el('button', { className: 'btn btn-reprocess', type: 'button' });
+      btn.textContent = 'Reprocessar';
+      btn.addEventListener('click', (e) => { e.stopPropagation(); reprocessSlide(slide.slideId, btn); });
       actions.appendChild(btn);
     }
+    const del = el('button', { className: 'btn btn-perigo btn-delete', type: 'button' });
+    del.textContent = 'Excluir';
+    del.addEventListener('click', (e) => { e.stopPropagation(); deleteSlide(slide.slideId, slide.originalFilename, row); });
+    actions.appendChild(del);
+    row.appendChild(actions);
 
-    // Delete button
-    const delBtn = el('button', { className: 'btn-delete' });
-    delBtn.textContent = 'Excluir';
-    delBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteSlide(slide.slideId, slide.originalFilename, card);
-    });
-    actions.appendChild(delBtn);
-
-    right.appendChild(actions);
-    card.appendChild(right);
-
-    return card;
+    if (slide.latestError) {
+      const err = el('div', { className: 'row-erro' });
+      err.textContent = (slide.latestErrorStage ? slide.latestErrorStage + ': ' : '') + slide.latestError;
+      row.appendChild(err);
+    }
+    return row;
   }
 
   function statusLabel(status) {
     const labels = {
-      ready: 'Pronta',
-      processing: 'Processando',
-      queued: 'Na fila',
-      failed: 'Erro'
+      ready: 'pronta',
+      processing: 'processando',
+      queued: 'na fila',
+      failed: 'erro'
     };
     return labels[status] || status || '--';
   }
@@ -1164,10 +1059,10 @@
           }
 
           const result = await res.json();
-          setText(saveStatus, result.message || 'Salvo com sucesso!');
+          setText(saveStatus, 'Configura\u00e7\u00e3o salva');
           saveStatus.className = 'save-status success';
         } catch (err) {
-          setText(saveStatus, 'Erro: ' + err.message);
+          setText(saveStatus, 'N\u00e3o foi poss\u00edvel salvar: ' + err.message);
           saveStatus.className = 'save-status error';
         } finally {
           saveBtn.disabled = false;
@@ -1229,7 +1124,7 @@
     btn.addEventListener('click', async () => {
       const statusEl = $(statusSelector);
       btn.disabled = true;
-      setText(statusEl, 'Enfileirando...');
+      setText(statusEl, 'Enviando...');
       statusEl.className = 'maintenance-status';
 
       try {
@@ -1245,10 +1140,11 @@
         }
 
         const data = await res.json();
-        setText(statusEl, data.message || `${data.queued} l\u00e2mina(s) enfileirada(s)`);
+        const noun = url.includes('labels') ? 'Etiquetas publicadas' : 'Previews republicados';
+        setText(statusEl, noun + ': ' + (data.queued ?? 0) + ' l\u00e2minas');
         statusEl.className = 'maintenance-status success';
       } catch (err) {
-        setText(statusEl, 'Erro: ' + err.message);
+        setText(statusEl, 'N\u00e3o foi poss\u00edvel: ' + err.message);
         statusEl.className = 'maintenance-status error';
       } finally {
         btn.disabled = false;
@@ -1343,7 +1239,7 @@
     // Named event: pending:count-changed (review queue)
     eventSource.addEventListener('pending:count-changed', (e) => {
       const data = safeParseJSON(e.data);
-      if (data && typeof data.count === 'number') updatePendingBadge(data.count);
+      if (data && typeof data.count === 'number') { updatePendingBadge(data.count); refreshPending(); }
     });
 
     // Generic message event (for any unnamed events)
@@ -1446,7 +1342,7 @@
     const failures = data.failures || [];
     setText(subtitle, failures.length === 0
       ? 'Tudo em ordem'
-      : (failures.length + (failures.length === 1 ? ' lâmina afetada' : ' lâminas afetadas')));
+      : (failures.length + (failures.length === 1 ? ' l\u00e2mina com falha' : ' l\u00e2minas com falha')));
 
     if (failures.length === 0) {
       if (empty) empty.style.display = '';
@@ -1507,8 +1403,8 @@
 
     // Actions
     const actions = el('div', { className: 'failure-actions' });
-    const detailsBtn = el('button', { className: 'btn-failure-details' });
-    detailsBtn.textContent = 'Ver timeline';
+    const detailsBtn = el('button', { className: 'btn btn-failure-details' });
+    detailsBtn.textContent = 'Timeline';
     detailsBtn.addEventListener('click', () => {
       openPipelineModal(failure.slideId, failure.originalFilename);
     });
@@ -1516,8 +1412,8 @@
 
     const advAction = failure.advice?.action;
     if (advAction === 'reprocess') {
-      const rpBtn = el('button', { className: 'btn-failure-action' });
-      rpBtn.textContent = 'Re-processar';
+      const rpBtn = el('button', { className: 'btn btn-primario btn-failure-action' });
+      rpBtn.textContent = 'Reprocessar';
       rpBtn.addEventListener('click', () => reprocessSlide(failure.slideId, rpBtn));
       actions.appendChild(rpBtn);
     } else if (advAction) {
@@ -1554,8 +1450,8 @@
         : (stuck.entityId || '').replace(/^preview:/, '');
       if (slideId) {
         const actions = el('div', { className: 'failure-actions' });
-        const btn = el('button', { className: 'btn-failure-details' });
-        btn.textContent = 'Ver timeline';
+        const btn = el('button', { className: 'btn btn-failure-details' });
+        btn.textContent = 'Timeline';
         btn.addEventListener('click', () => openPipelineModal(slideId, slideId.substring(0, 12)));
         actions.appendChild(btn);
         card.appendChild(actions);
@@ -1580,7 +1476,7 @@
     const body = $('#pipelineModalBody');
     if (!overlay) return;
 
-    setText(title, 'Timeline da Lâmina');
+    setText(title, 'Timeline da l\u00e2mina');
     setText(subtitle, filenameHint || slideId.substring(0, 16));
     clearChildren(body);
     body.appendChild(el('div', { className: 'pipeline-loading', textContent: 'Carregando...' }));
@@ -1747,128 +1643,142 @@
     pendingBadge.classList.toggle('hidden', count === 0);
   }
 
-  // Initial fetch on page load — defensive: check r.ok before parsing
-  fetch('/v1/pending-slides')
-    .then(r => r.ok ? r.json() : null)
-    .then(d => { if (d && typeof d.total === 'number') updatePendingBadge(d.total); })
-    .catch(() => {});
+  // === Review queue: overview strip + Revisão panel ============================
+  let pendingData = { total: 0, slides: [] };
 
-  if (pendingBadge) {
-    pendingBadge.addEventListener('click', () => {
-      document.dispatchEvent(new CustomEvent('open-pending-panel'));
+  function labelUrl(id) { return '/v1/pending-slides/' + encodeURIComponent(id) + '/image?which=label'; }
+
+  function renderReviewStrip() {
+    const strip = $('#ovReview');
+    if (!strip) return;
+    const { total, slides } = pendingData;
+    strip.classList.toggle('vazio', total === 0);
+    setText('#ovReviewCount', String(total));
+    $('#ovReviewEmpty').classList.toggle('hidden', total !== 0);
+    const thumbs = $('#ovReviewThumbs');
+    clearChildren(thumbs);
+    slides.slice(0, 5).forEach((sl) => {
+      const b = el('button', { className: 'thumb', type: 'button' });
+      const img = el('img', { src: labelUrl(sl.id), alt: '' });
+      b.appendChild(img);
+      const name = el('span', { className: 'thumb-name' });
+      name.textContent = sl.proposed_name || 'Sem leitura';
+      b.appendChild(name);
+      b.addEventListener('click', () => document.dispatchEvent(new CustomEvent('open-review-modal', { detail: { slideId: sl.id } })));
+      thumbs.appendChild(b);
     });
-    pendingBadge.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        document.dispatchEvent(new CustomEvent('open-pending-panel'));
+    if (total > 5) {
+      const more = el('button', { className: 'thumb thumb-more', type: 'button' });
+      more.textContent = '+' + (total - 5);
+      more.addEventListener('click', () => activateTab('review'));
+      thumbs.appendChild(more);
+    }
+  }
+
+  function buildReviewCard(sl) {
+    const card = el('div', { className: 'review-card' });
+    card.dataset.slideId = sl.id;
+    const img = el('img', { src: labelUrl(sl.id), alt: 'Foto da etiqueta' });
+    card.appendChild(img);
+
+    const body = el('div');
+    const field = el('div', { className: 'field' });
+    const label = el('label'); label.textContent = 'Nome lido pelo OCR';
+    const input = el('input', { type: 'text', className: 't-id', autocomplete: 'off', spellcheck: 'false' });
+    input.value = sl.proposed_name || '';
+    input.placeholder = 'AP26000388A1, RE26000003 ou 26-388A';
+    const file = el('small', { className: 'review-card-file' }); file.textContent = sl.original_filename || '';
+    const err = el('small', { className: 'erro hidden' });
+    field.appendChild(label); field.appendChild(input); field.appendChild(file); field.appendChild(err);
+    body.appendChild(field);
+
+    const actions = el('div', { className: 'review-card-actions' });
+    const confirm = el('button', { className: 'btn btn-primario', type: 'button' }); confirm.textContent = 'Confirmar';
+    const open = el('button', { className: 'btn', type: 'button' }); open.textContent = 'Ver l\u00e2mina inteira';
+    const rescan = el('button', { className: 'btn', type: 'button' }); rescan.textContent = 'Rescanear';
+    actions.appendChild(confirm); actions.appendChild(open); actions.appendChild(rescan);
+    body.appendChild(actions);
+    card.appendChild(body);
+
+    confirm.addEventListener('click', async () => {
+      const parsed = parseOcrInput(input.value);
+      if (!parsed) {
+        input.classList.add('invalido');
+        err.textContent = 'Formato inv\u00e1lido. Use o nome completo (AP26000388A1, C26000588A, RE26000003) ou abreviado com 3 d\u00edgitos ou mais (26-388A).';
+        err.classList.remove('hidden');
+        return;
+      }
+      confirm.disabled = true;
+      try {
+        const r = await fetch('/v1/pending-slides/' + encodeURIComponent(sl.id) + '/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: parsed.fullName }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || d.message || r.statusText);
+        card.remove();
+        await refreshPending();
+        fetchSlides();
+      } catch (e) {
+        err.textContent = e.message; err.classList.remove('hidden'); confirm.disabled = false;
       }
     });
-  }
-
-  // === Review queue: notification panel ============================
-  const pendingPanel = document.getElementById('pendingPanel');
-  const pendingPanelList = document.getElementById('pendingPanelList');
-  const pendingPanelCount = document.getElementById('pendingPanelCount');
-  const pendingPanelClose = document.getElementById('pendingPanelClose');
-  const pendingPanelOpenAll = document.getElementById('pendingPanelOpenAll');
-
-  function buildPendingPanelItem(slide) {
-    const li = document.createElement('li');
-    li.className = 'pending-panel__item';
-    li.dataset.slideId = slide.id;
-
-    const proposed = document.createElement('div');
-    proposed.className = 'proposed';
-    proposed.textContent = slide.proposed_name || '(sem sugestão)';
-    li.appendChild(proposed);
-
-    const meta = document.createElement('div');
-    meta.className = 'meta';
-    meta.textContent = slide.original_filename || '';
-    li.appendChild(meta);
-
-    li.addEventListener('click', () => {
-      pendingPanel.classList.add('hidden');
-      document.dispatchEvent(new CustomEvent('open-review-modal', { detail: { slideId: slide.id } }));
+    input.addEventListener('input', () => { input.classList.remove('invalido'); err.classList.add('hidden'); });
+    open.addEventListener('click', () => document.dispatchEvent(new CustomEvent('open-review-modal', { detail: { slideId: sl.id } })));
+    rescan.addEventListener('click', async () => {
+      rescan.disabled = true;
+      try {
+        const r = await fetch('/v1/pending-slides/' + encodeURIComponent(sl.id) + '/rescan', { method: 'POST' });
+        if (!r.ok) throw new Error(r.statusText);
+        card.remove(); await refreshPending();
+      } catch (e) { err.textContent = 'N\u00e3o foi poss\u00edvel marcar para rescanear: ' + e.message; err.classList.remove('hidden'); rescan.disabled = false; }
     });
-    return li;
+    return card;
   }
 
-  async function renderPendingPanel() {
-    if (!pendingPanel) return;
+  function renderReviewList() {
+    const list = $('#reviewList');
+    if (!list) return;
+    const { total, slides } = pendingData;
+    setText('#reviewQueueCount', total + ' aguardando');
+    $('#reviewEmpty').classList.toggle('hidden', total !== 0);
+    clearChildren(list);
+    slides.forEach((sl) => list.appendChild(buildReviewCard(sl)));
+  }
+
+  refreshPending = async function () {
     try {
       const r = await fetch('/v1/pending-slides');
-      if (!r.ok) return;
-      const data = await r.json();
-      pendingPanelCount.textContent = String(data.total);
-      // Safe wipe: emptying via removeChild loop (no innerHTML).
-      while (pendingPanelList.firstChild) pendingPanelList.removeChild(pendingPanelList.firstChild);
-      for (const s of data.slides.slice(0, 5)) {
-        pendingPanelList.appendChild(buildPendingPanelItem(s));
-      }
-    } catch (err) {
-      console.warn('Failed to render pending panel:', err);
+      if (!r.ok) throw new Error(r.statusText);
+      const d = await r.json();
+      pendingData = { total: d.total || 0, slides: d.slides || [] };
+    } catch (e) {
+      console.error('pending fetch error:', e);
     }
+    updatePendingBadge(pendingData.total);
+    renderReviewStrip();
+    renderReviewList();
+  };
+
+  async function confirmAllPending(statusEl) {
+    if (statusEl) statusEl.textContent = 'Confirmando...';
+    try {
+      const r = await fetch('/v1/pending-slides/confirm-all', { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || r.statusText);
+      const n = d.confirmed || 0; // server returns { ok, confirmed, skipped, failed }
+      if (statusEl) statusEl.textContent = n === 1 ? 'Leitura confirmada: 1 l\u00e2mina' : 'Leituras confirmadas: ' + n + ' l\u00e2minas';
+    } catch (e) {
+      if (statusEl) statusEl.textContent = 'N\u00e3o foi poss\u00edvel confirmar: ' + e.message;
+    }
+    await refreshPending();
+    fetchSlides();
   }
 
-  if (pendingPanel) {
-    document.addEventListener('open-pending-panel', () => {
-      pendingPanel.classList.remove('hidden');
-      renderPendingPanel();
-    });
-
-    if (pendingPanelClose) {
-      pendingPanelClose.addEventListener('click', () => pendingPanel.classList.add('hidden'));
-    }
-
-    if (pendingPanelOpenAll) {
-      pendingPanelOpenAll.addEventListener('click', () => {
-        pendingPanel.classList.add('hidden');
-        document.dispatchEvent(new CustomEvent('open-review-modal', { detail: { slideId: null } }));
-      });
-    }
-
-    // One click accepts every OCR reading in the queue; unnamed slides stay pending
-    const pendingConfirmAll = document.getElementById('pendingConfirmAll');
-    if (pendingConfirmAll) {
-      pendingConfirmAll.addEventListener('click', async () => {
-        if (!confirm('Confirmar todas as leituras do OCR que estão na fila?')) return;
-        pendingConfirmAll.disabled = true;
-        try {
-          const res = await fetch('/v1/pending-slides/confirm-all', { method: 'POST' });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-          const failed = (data.failed || []).length;
-          alert(`Confirmadas: ${data.confirmed}. Sem leitura (ficam na fila): ${data.skipped}.` + (failed ? ` Falhas: ${failed}.` : ''));
-          await renderPendingPanel();
-          try {
-            const r = await fetch('/v1/pending-slides');
-            if (r.ok) updatePendingBadge((await r.json()).total);
-          } catch (err) { console.warn('Failed to refresh pending badge:', err); }
-          fetchSlides();
-        } catch (err) {
-          alert(`Erro: ${err.message}`);
-        } finally {
-          pendingConfirmAll.disabled = false;
-        }
-      });
-    }
-
-    // Close on outside click (but not when clicking the badge that opened it).
-    document.addEventListener('click', (e) => {
-      if (pendingPanel.classList.contains('hidden')) return;
-      if (pendingPanel.contains(e.target)) return;
-      if (e.target.closest && e.target.closest('#pendingBadge')) return;
-      pendingPanel.classList.add('hidden');
-    });
-
-    // Close on Escape
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !pendingPanel.classList.contains('hidden')) {
-        pendingPanel.classList.add('hidden');
-      }
-    });
-  }
+  ['#ovReviewConfirmAll', '#reviewConfirmAll'].forEach((sel) => {
+    const b = $(sel);
+    if (b) b.addEventListener('click', () => confirmAllPending($('#reviewQueueCount')));
+  });
+  const ovOpen = $('#ovReviewOpen');
+  if (ovOpen) ovOpen.addEventListener('click', () => activateTab('review'));
+  refreshPending();
 
   // === Review queue: modal (Tasks 13+14) =========================
   const reviewModal = document.getElementById('reviewModal');
@@ -1914,6 +1824,7 @@
   function closeReviewModal() {
     if (!reviewModal) return;
     reviewModal.classList.add('hidden');
+    reviewModal.classList.remove('aberto');
     currentSlideId = null;
   }
 
@@ -1944,6 +1855,7 @@
 
       loadImage(currentSlideId, currentImageWhich);
       reviewModal.classList.remove('hidden');
+      reviewModal.classList.add('aberto');
       reviewFilename.focus();
     } catch (err) {
       console.warn('Failed to open review modal:', err);
@@ -1988,6 +1900,7 @@
 
   // === Review queue: confirm / rescan wiring (Task 14) =============
   async function loadNextOrClose() {
+    refreshPending();
     try {
       const r = await fetch('/v1/pending-slides');
       if (!r.ok) { closeReviewModal(); return; }
@@ -2060,6 +1973,7 @@
     initFailuresControls();
     initPipelineModal();
     startDashboardPolling();
+    fetchSlides();
     initSSE();
   }
 

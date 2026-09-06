@@ -4,318 +4,189 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SuperNavi Edge</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/dashboard.css">
 </head>
 <body>
+<div class="app">
 
-  <!-- Header -->
-  <header class="header">
-    <div class="header-brand">
-      <svg class="header-logo" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M12 2a10 10 0 0 1 0 20"/>
-        <circle cx="12" cy="12" r="3"/>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+        <rect x="10" y="1"  width="8" height="8" rx="2.4" fill="var(--sn-prata)"/>
+        <rect x="1"  y="10" width="8" height="8" rx="2.4" fill="var(--sn-prata)"/>
+        <rect x="10" y="10" width="8" height="8" rx="2.4" fill="var(--sn-azul)"/>
+        <rect x="19" y="10" width="8" height="8" rx="2.4" fill="var(--sn-prata)"/>
+        <rect x="10" y="19" width="8" height="8" rx="2.4" fill="var(--sn-prata)"/>
       </svg>
-      <h1 class="header-title">SuperNavi Edge</h1>
-      <div id="pendingBadge" class="pending-badge hidden" role="button" tabindex="0" title="Aguardando confirmação">
-        <span class="pending-badge__icon">&#9679;</span>
-        <span class="pending-badge__count" id="pendingCount">0</span>
-        <span class="pending-badge__label">aguardando</span>
-      </div>
+      <span class="brand-name">SuperNavi Edge</span>
+      <span class="brand-agent" id="hdrAgent">Agente --</span>
     </div>
-    <div class="header-status" id="connectionStatus">
-      <span class="status-dot disconnected" id="connectionDot"></span>
-      <span class="status-text" id="connectionText">Desconectado</span>
+    <div class="topbar-health" aria-live="polite">
+      <span class="health"><span class="dot" id="hdrTunnelDot"></span><span id="hdrTunnelText">Túnel</span></span>
+      <span class="health"><span class="dot" id="hdrScannerDot"></span><span id="hdrScannerText">Scanner</span></span>
     </div>
   </header>
 
-  <!-- Tab Bar -->
-  <nav class="tab-bar" id="tabBar">
-    <button class="tab-btn active" data-tab="status">Status</button>
-    <button class="tab-btn" data-tab="slides">L&acirc;minas</button>
-    <button class="tab-btn" data-tab="failures">
-      Falhas <span class="tab-badge" id="failuresBadge" style="display:none">0</span>
+  <nav class="rail" id="tabBar" aria-label="Seções">
+    <button class="tab-btn active" data-tab="status">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      <span>Visão geral</span>
     </button>
-    <button class="tab-btn" data-tab="activity">Atividade</button>
-    <button class="tab-btn" data-tab="settings">Configura&ccedil;&otilde;es</button>
+    <button class="tab-btn" data-tab="slides">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>
+      <span>Lâminas</span>
+    </button>
+    <button class="tab-btn" data-tab="review">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span>Revisão</span>
+      <span class="rail-badge hidden" id="pendingBadge" title="Aguardando confirmação"><span id="pendingCount">0</span></span>
+    </button>
+    <button class="tab-btn" data-tab="failures">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      <span>Falhas</span>
+      <span class="rail-badge rail-badge-falha" id="failuresBadge" style="display:none">0</span>
+    </button>
+    <button class="tab-btn" data-tab="activity">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      <span>Atividade</span>
+    </button>
+    <button class="tab-btn" data-tab="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      <span>Configurações</span>
+    </button>
   </nav>
 
-  <!-- Tab Panels -->
-  <main class="tab-panels">
+  <main class="content">
 
-    <!-- Tab 1: Status -->
+    <!-- Visão geral -->
     <section class="tab-panel active" id="panel-status">
-      <div class="status-grid" id="statusGrid">
-
-        <div class="health-card" id="card-tunnel">
-          <div class="card-header">
-            <span class="card-icon">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-              </svg>
-            </span>
-            <h3 class="card-title">Tunnel Cloud</h3>
-          </div>
-          <div class="card-body">
-            <div class="card-status-row">
-              <span class="status-dot disconnected" id="tunnelDot"></span>
-              <span id="tunnelStatusText">--</span>
-            </div>
-            <div class="card-detail" id="tunnelAgent">Agent: --</div>
+      <div class="review-strip" id="ovReview">
+        <div class="review-strip-head">
+          <h2 class="t-secao">Aguardando sua confirmação</h2>
+          <span class="t-grande" id="ovReviewCount">0</span>
+          <div class="review-strip-actions">
+            <button class="btn" id="ovReviewConfirmAll">Confirmar todas</button>
+            <button class="btn btn-primario" id="ovReviewOpen">Abrir revisão</button>
           </div>
         </div>
-
-        <div class="health-card" id="card-watcher">
-          <div class="card-header">
-            <span class="card-icon">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-            </span>
-            <h3 class="card-title">Watcher</h3>
-          </div>
-          <div class="card-body">
-            <div class="card-status-row">
-              <span class="status-dot disconnected" id="watcherDot"></span>
-              <span id="watcherStatusText">--</span>
-            </div>
-            <div class="card-detail" id="watcherDir">Pasta: --</div>
-          </div>
-        </div>
-
-        <div class="health-card" id="card-db">
-          <div class="card-header">
-            <span class="card-icon">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <ellipse cx="12" cy="5" rx="9" ry="3"/>
-                <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
-                <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
-              </svg>
-            </span>
-            <h3 class="card-title">Banco de Dados</h3>
-          </div>
-          <div class="card-body">
-            <div class="card-status-row">
-              <span class="status-dot connected" id="dbDot"></span>
-              <span id="dbStatusText">Conectado</span>
-            </div>
-            <div class="card-detail" id="dbSlideCount">L&acirc;minas: --</div>
-          </div>
-        </div>
-
-        <div class="health-card" id="card-queue">
-          <div class="card-header">
-            <span class="card-icon">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"/>
-                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>
-              </svg>
-            </span>
-            <h3 class="card-title">Fila (Redis)</h3>
-          </div>
-          <div class="card-body">
-            <div class="card-detail" id="queuePending">Pendentes: --</div>
-            <div class="card-detail" id="queueRunning">Executando: --</div>
-          </div>
-        </div>
-
-        <div class="health-card" id="card-processor">
-          <div class="card-header">
-            <span class="card-icon">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="4" y="4" width="16" height="16" rx="2" ry="2"/>
-                <rect x="9" y="9" width="6" height="6"/>
-                <line x1="9" y1="1" x2="9" y2="4"/>
-                <line x1="15" y1="1" x2="15" y2="4"/>
-                <line x1="9" y1="20" x2="9" y2="23"/>
-                <line x1="15" y1="20" x2="15" y2="23"/>
-                <line x1="20" y1="9" x2="23" y2="9"/>
-                <line x1="20" y1="14" x2="23" y2="14"/>
-                <line x1="1" y1="9" x2="4" y2="9"/>
-                <line x1="1" y1="14" x2="4" y2="14"/>
-              </svg>
-            </span>
-            <h3 class="card-title">Processador</h3>
-          </div>
-          <div class="card-body" id="processorBody">
-            <div class="card-detail" id="processorStatus">Ocioso</div>
-          </div>
-        </div>
-
-        <div class="health-card" id="card-disk">
-          <div class="card-header">
-            <span class="card-icon">
-              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                <polyline points="3.27,6.96 12,12.01 20.73,6.96"/>
-                <line x1="12" y1="22.08" x2="12" y2="12"/>
-              </svg>
-            </span>
-            <h3 class="card-title">Disco</h3>
-          </div>
-          <div class="card-body" id="diskBody">
-            <div class="card-detail" id="diskReady">Prontas: --</div>
-            <div class="card-detail" id="diskProcessing">Processando: --</div>
-            <div class="card-detail" id="diskQueued">Na fila: --</div>
-            <div class="card-detail" id="diskFailed">Com erro: --</div>
-          </div>
-        </div>
-
+        <div class="review-thumbs" id="ovReviewThumbs"></div>
+        <p class="review-strip-empty t-2 hidden" id="ovReviewEmpty">Nenhuma lâmina aguardando confirmação.</p>
       </div>
 
-      <div class="maintenance-section">
-        <h3 class="maintenance-title">Manuten&ccedil;&atilde;o</h3>
-        <div class="maintenance-actions">
-          <button class="btn-maintenance" id="btnRepublishPreviews">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="23 4 23 10 17 10"/>
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
-            </svg>
-            Republicar Previews
-          </button>
-          <span class="maintenance-status" id="republishStatus"></span>
-        </div>
-        <div class="maintenance-actions">
-          <button class="btn-maintenance" id="btnPublishLabels">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/>
-              <line x1="7" y1="7" x2="7.01" y2="7"/>
-            </svg>
-            Publicar Etiquetas
-          </button>
-          <span class="maintenance-status" id="publishLabelsStatus"></span>
+      <div class="services-head">
+        <h2 class="t-secao">Serviços</h2>
+        <div class="maintenance">
+          <button class="btn btn-pequeno" id="btnRepublishPreviews">Republicar previews</button>
+          <span class="maint-status t-3" id="republishStatus"></span>
+          <button class="btn btn-pequeno" id="btnPublishLabels">Publicar etiquetas</button>
+          <span class="maint-status t-3" id="publishLabelsStatus"></span>
         </div>
       </div>
+      <div class="blocks" id="statusGrid">
+        <div class="service" id="blk-tunnel"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Túnel</span><span class="block-detail t-3">--</span></div></div>
+        <div class="service" id="blk-scanner"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Scanner</span><span class="block-detail t-3">--</span></div></div>
+        <div class="service" id="blk-watcher"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Entrada</span><span class="block-detail t-3">--</span></div></div>
+        <div class="service" id="blk-db"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Banco</span><span class="block-detail t-3">--</span></div></div>
+        <div class="service" id="blk-queue"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Fila</span><span class="block-detail t-3">--</span></div></div>
+        <div class="service" id="blk-processor"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Processador</span><span class="block-detail t-3" id="processorBody">--</span></div></div>
+        <div class="service" id="blk-disk"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Disco</span><span class="block-detail t-3">--</span></div></div>
+      </div>
+
+      <div class="section-head">
+        <h2 class="t-secao">Lâminas recentes</h2>
+        <button class="btn btn-link" data-goto="slides">Ver todas</button>
+      </div>
+      <div class="rows" id="recentSlides"></div>
     </section>
 
-    <!-- Tab 2: Slides -->
+    <!-- Lâminas -->
     <section class="tab-panel" id="panel-slides">
-      <div class="slides-toolbar">
-        <div class="filter-buttons" id="filterButtons">
-          <button class="filter-btn active" data-filter="all">Todas</button>
-          <button class="filter-btn" data-filter="ready">Prontas</button>
-          <button class="filter-btn" data-filter="processing">Processando</button>
-          <button class="filter-btn" data-filter="failed">Erro</button>
-        </div>
-        <span class="slides-count" id="slidesCount">0 l&acirc;minas</span>
+      <div class="section-head">
+        <h2 class="t-pagina">Lâminas</h2>
+        <span class="t-2 tnum" id="slidesCount">0 lâminas</span>
       </div>
-      <div class="slides-list" id="slidesList">
-        <div class="empty-state" id="slidesEmpty">
-          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-            <circle cx="8.5" cy="8.5" r="1.5"/>
-            <polyline points="21,15 16,10 5,21"/>
-          </svg>
-          <p>Nenhuma l&acirc;mina encontrada</p>
-        </div>
+      <div class="segment" id="filterButtons" role="tablist">
+        <button class="filter-btn active" data-filter="all">Todas</button>
+        <button class="filter-btn" data-filter="ready">Prontas</button>
+        <button class="filter-btn" data-filter="processing">Processando</button>
+        <button class="filter-btn" data-filter="failed">Erro</button>
+      </div>
+      <div class="rows" id="slidesList">
+        <p class="empty" id="slidesEmpty">Nenhuma lâmina encontrada com este filtro.</p>
       </div>
     </section>
 
-    <!-- Tab: Failures -->
+    <!-- Revisão -->
+    <section class="tab-panel" id="panel-review">
+      <div class="section-head">
+        <h2 class="t-pagina">Revisão</h2>
+        <span class="t-2 tnum" id="reviewQueueCount">0 aguardando</span>
+        <button class="btn" id="reviewConfirmAll">Confirmar todas</button>
+      </div>
+      <p class="t-2">Confira a foto da etiqueta e confirme o nome lido. Um nome só entra no PathoWeb depois que uma pessoa confirma.</p>
+      <div class="review-cards" id="reviewList"></div>
+      <p class="empty hidden" id="reviewEmpty">Nenhuma lâmina aguardando confirmação.</p>
+    </section>
+
+    <!-- Falhas -->
     <section class="tab-panel" id="panel-failures">
-      <div class="failures-header">
-        <h2 class="failures-title">L&acirc;minas com Problema</h2>
-        <span class="failures-subtitle" id="failuresSubtitle">--</span>
-        <button class="btn-clear" id="refreshFailures" style="margin-left:auto">Atualizar</button>
+      <div class="section-head">
+        <h2 class="t-pagina">Falhas</h2>
+        <span class="t-2" id="failuresSubtitle">--</span>
+        <button class="btn btn-pequeno" id="refreshFailures">Atualizar</button>
       </div>
-      <div class="failures-list" id="failuresList">
-        <div class="empty-state" id="failuresEmpty">
-          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-            <polyline points="22 4 12 14.01 9 11.01"/>
-          </svg>
-          <p>Nenhuma l&acirc;mina com problema</p>
-        </div>
+      <h3 class="t-secao">Falhas de processamento</h3>
+      <div class="rows" id="failuresList">
+        <p class="empty" id="failuresEmpty">Nenhuma lâmina com falha. O scanner segue sendo monitorado.</p>
       </div>
-
-      <div class="failures-section" id="stuckSyncSection" style="display:none">
-        <h3 class="failures-section-title">Eventos travados na sincroniza&ccedil;&atilde;o</h3>
-        <div class="failures-list" id="stuckSyncList"></div>
+      <div id="stuckSyncSection" style="display:none">
+        <h3 class="t-secao">Sincronização travada</h3>
+        <div class="rows" id="stuckSyncList"></div>
       </div>
     </section>
 
-    <!-- Pipeline Timeline Modal -->
-    <div class="pipeline-modal-overlay" id="pipelineModal">
-      <div class="pipeline-modal">
-        <div class="pipeline-modal-header">
-          <div>
-            <h2 class="pipeline-modal-title" id="pipelineModalTitle">Timeline da L&acirc;mina</h2>
-            <div class="pipeline-modal-subtitle" id="pipelineModalSubtitle">--</div>
-          </div>
-          <button class="ocr-modal-close" id="pipelineModalClose" aria-label="Fechar">&times;</button>
-        </div>
-        <div class="pipeline-modal-body" id="pipelineModalBody">
-          <div class="pipeline-loading">Carregando...</div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Tab 3: Activity -->
+    <!-- Atividade -->
     <section class="tab-panel" id="panel-activity">
-      <div class="activity-header">
-        <h2 class="activity-title">Atividade Recente</h2>
-        <button class="btn-clear" id="clearActivity">Limpar</button>
+      <div class="section-head">
+        <h2 class="t-pagina">Atividade</h2>
+        <button class="btn btn-pequeno" id="clearActivity">Limpar</button>
       </div>
-      <div class="activity-feed" id="activityFeed">
-        <div class="empty-state" id="activityEmpty">
-          <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4">
-            <polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/>
-          </svg>
-          <p>Nenhuma atividade registrada</p>
-        </div>
+      <div class="rows" id="activityFeed">
+        <p class="empty" id="activityEmpty">Nenhuma atividade registrada ainda.</p>
       </div>
     </section>
 
-    <!-- Tab 4: Settings -->
+    <!-- Configurações -->
     <section class="tab-panel" id="panel-settings">
-      <div class="settings-form" id="settingsForm">
-
-        <div class="form-section-title">Conex&atilde;o Cloud</div>
-
-        <div class="form-group">
-          <label class="form-label" for="cfgEdgeKey">EDGE_KEY</label>
-          <div class="input-password-wrap">
-            <input class="form-input" type="password" id="cfgEdgeKey" placeholder="Cole a chave gerada no painel admin" autocomplete="off">
-            <button type="button" class="btn-toggle-password" id="toggleEdgeKey" aria-label="Mostrar/ocultar chave">
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" class="icon-eye">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                <circle cx="12" cy="12" r="3"/>
-              </svg>
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" class="icon-eye-off" style="display:none">
-                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                <line x1="1" y1="1" x2="23" y2="23"/>
-              </svg>
+      <div class="section-head"><h2 class="t-pagina">Configurações</h2></div>
+      <form class="form" id="settingsForm" onsubmit="return false">
+        <h3 class="t-secao">Conexão com a nuvem</h3>
+        <div class="field">
+          <label for="cfgEdgeKey">Chave do edge</label>
+          <div class="field-row">
+            <input type="password" id="cfgEdgeKey" placeholder="Cole a chave gerada no painel da nuvem" autocomplete="off">
+            <button type="button" class="btn btn-icone" id="toggleEdgeKey" aria-label="Mostrar ou ocultar chave">
+              <svg viewBox="0 0 24 24" class="icon-eye" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              <svg viewBox="0 0 24 24" class="icon-eye-off" style="display:none" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
             </button>
           </div>
-          <span class="form-hint">Chave de autentica&ccedil;&atilde;o gerada no painel admin do cloud</span>
+          <small>Gerada no painel de administração da nuvem. Identifica este edge no túnel.</small>
         </div>
-
         <div class="edge-info" id="edgeInfo" style="display:none">
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" class="edge-info-icon">
-            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-            <polyline points="22 4 12 14.01 9 11.01"/>
-          </svg>
-          <span class="edge-info-text">
-            <strong id="edgeInfoName">--</strong>
-            <span class="edge-info-sep">&middot;</span>
-            <span id="edgeInfoLab">--</span>
-          </span>
+          <span class="dot ok"></span>
+          <span><strong id="edgeInfoName">--</strong> <span class="t-2" id="edgeInfoLab">--</span></span>
         </div>
 
-        <div class="form-section-divider"></div>
-
-        <div class="form-section-title">Scanner &amp; Pasta</div>
-
-        <div class="form-group">
-          <label class="form-label" for="cfgSlidesDir">Pasta de L&acirc;minas</label>
-          <input class="form-input" type="text" id="cfgSlidesDir" placeholder="/caminho/para/laminas">
-          <span class="form-hint">Caminho da pasta monitorada no host</span>
+        <h3 class="t-secao">Scanner e pasta</h3>
+        <div class="field">
+          <label for="cfgSlidesDir">Pasta de lâminas</label>
+          <input type="text" id="cfgSlidesDir" placeholder="/caminho/para/laminas">
+          <small>Pasta do scanner monitorada no computador.</small>
         </div>
-
-        <div class="form-group">
-          <label class="form-label" for="cfgScannerType">Tipo de Scanner</label>
-          <select class="form-select" id="cfgScannerType">
+        <div class="field">
+          <label for="cfgScannerType">Tipo de scanner</label>
+          <select id="cfgScannerType">
             <option value="unknown">Desconhecido</option>
             <option value="motic">Motic</option>
             <option value="leica">Leica</option>
@@ -324,129 +195,118 @@
             <option value="zeiss">Zeiss</option>
           </select>
         </div>
-
-        <div class="form-group">
-          <label class="form-label" for="cfgStableSeconds">
-            Tempo de Estabilidade: <span id="stableSecondsValue">10</span>s
-          </label>
-          <input class="form-range" type="range" id="cfgStableSeconds" min="5" max="60" value="10" step="1">
-          <span class="form-hint">Segundos de espera ap&oacute;s &uacute;ltima modifica&ccedil;&atilde;o do arquivo</span>
+        <div class="field">
+          <label for="cfgStableSeconds">Tempo de estabilidade: <span class="tnum" id="stableSecondsValue">10</span> s</label>
+          <input type="range" id="cfgStableSeconds" min="5" max="60" value="10" step="1">
+          <small>Segundos de espera depois da última modificação do arquivo antes de ler a lâmina.</small>
         </div>
-
         <div class="form-actions">
-          <button class="btn-save" id="saveConfig">Salvar Configura&ccedil;&otilde;es</button>
-          <span class="save-status" id="saveStatus"></span>
+          <button type="button" class="btn btn-primario" id="saveConfig">Salvar configuração</button>
+          <span class="t-2" id="saveStatus"></span>
         </div>
-
-      </div>
+      </form>
     </section>
 
   </main>
+</div>
 
-  <!-- OCR Review Modal -->
-  <div class="ocr-modal-overlay" id="ocrModal">
-    <div class="ocr-modal">
-      <div class="ocr-modal-header">
-        <h2 class="ocr-modal-title">Verifica&ccedil;&atilde;o OCR</h2>
-        <div class="ocr-nav">
-          <button class="ocr-nav-btn" id="ocrPrev" aria-label="Anterior">&#9664;</button>
-          <span class="ocr-nav-counter" id="ocrNavCounter">1 / 1</span>
-          <button class="ocr-nav-btn" id="ocrNext" aria-label="Pr&oacute;xima">&#9654;</button>
-        </div>
-        <button class="ocr-modal-close" id="ocrModalClose" aria-label="Fechar">&times;</button>
+<!-- Timeline da lâmina -->
+<div class="modal-veu" id="pipelineModal">
+  <div class="modal modal-timeline" role="dialog" aria-modal="true" aria-labelledby="pipelineModalTitle">
+    <header class="modal-head">
+      <div>
+        <h2 class="t-secao" id="pipelineModalTitle">Timeline da lâmina</h2>
+        <div class="t-2" id="pipelineModalSubtitle">--</div>
       </div>
-      <div class="ocr-modal-columns">
-        <!-- Left column: images -->
-        <div class="ocr-col-left">
-          <div class="ocr-tabs">
-            <button class="ocr-tab active" data-tab="slide2">L&acirc;mina</button>
-            <button class="ocr-tab" data-tab="label">Label</button>
-          </div>
-          <div class="ocr-label-container">
-            <img class="ocr-label-image" id="ocrSlide2Image" alt="Vis&atilde;o geral da l&acirc;mina">
-            <img class="ocr-label-image" id="ocrLabelImage" alt="Label da l&acirc;mina" style="display:none">
-            <div class="ocr-label-placeholder" id="ocrLabelPlaceholder" style="display:none">Imagem n&atilde;o dispon&iacute;vel</div>
-          </div>
+      <button class="btn btn-icone" id="pipelineModalClose" aria-label="Fechar">&times;</button>
+    </header>
+    <div class="modal-body" id="pipelineModalBody"><p class="t-2">Carregando...</p></div>
+  </div>
+</div>
+
+<!-- Renomear lâmina já identificada -->
+<div class="modal-veu" id="ocrModal">
+  <div class="modal modal-renomear" role="dialog" aria-modal="true">
+    <header class="modal-head">
+      <h2 class="t-secao">Renomear lâmina</h2>
+      <div class="modal-nav">
+        <button class="btn btn-icone" id="ocrPrev" aria-label="Anterior">&#8249;</button>
+        <span class="t-2 tnum" id="ocrNavCounter">1 / 1</span>
+        <button class="btn btn-icone" id="ocrNext" aria-label="Próxima">&#8250;</button>
+      </div>
+      <button class="btn btn-icone" id="ocrModalClose" aria-label="Fechar">&times;</button>
+    </header>
+    <div class="modal-body modal-colunas">
+      <div class="foto">
+        <div class="segment segment-pequeno">
+          <button class="ocr-tab active" data-tab="slide2">Lâmina</button>
+          <button class="ocr-tab" data-tab="label">Etiqueta</button>
         </div>
-        <!-- Right column: info + actions -->
-        <div class="ocr-col-right">
-          <div class="ocr-info">
-            <div class="ocr-info-row">
-              <span class="ocr-info-label">Leitura OCR</span>
-              <span class="ocr-info-value" id="ocrReading">--</span>
-            </div>
-            <div class="ocr-info-row">
-              <span class="ocr-info-label">Arquivo</span>
-              <span class="ocr-info-value ocr-filename-value" id="ocrFilename">--</span>
-            </div>
-            <div class="ocr-info-row">
-              <span class="ocr-info-label">Status</span>
-              <span class="ocr-info-value" id="ocrStatusValue">--</span>
-            </div>
-          </div>
-          <div class="ocr-manual-edit">
-            <label class="ocr-manual-label">Corrigir manualmente:</label>
-            <div class="ocr-manual-input-row">
-              <input type="text" class="ocr-manual-input" id="ocrManualInput" placeholder="AP26000388A1 ou 26-388A" autocomplete="off" spellcheck="false">
-              <button class="btn-manual-save" id="btnManualSave" disabled title="Salvar">&#10003;</button>
-            </div>
-            <div class="ocr-manual-preview" id="ocrManualPreview"></div>
-          </div>
-          <div class="ocr-status-msg" id="ocrStatusMsg"></div>
-          <div class="ocr-modal-footer">
-            <button class="btn-reocr" id="btnReocr">Re-ler OCR</button>
-            <button class="btn-close-modal" id="btnCloseOcr">Fechar</button>
-          </div>
+        <div class="foto-quadro">
+          <img id="ocrSlide2Image" alt="Foto da lâmina inteira">
+          <img id="ocrLabelImage" alt="Foto da etiqueta" style="display:none">
+          <div class="foto-vazia" id="ocrLabelPlaceholder" style="display:none">Foto não disponível</div>
         </div>
       </div>
-    </div>
-  </div>
-
-  <!-- Review queue: notification panel (position: fixed, layout-independent) -->
-  <div id="pendingPanel" class="pending-panel hidden" role="dialog" aria-label="Lâminas aguardando">
-    <div class="pending-panel__header">
-      <span>Aguardando &middot; <span id="pendingPanelCount">0</span></span>
-      <button type="button" id="pendingPanelClose" aria-label="Fechar">&times;</button>
-    </div>
-    <ul id="pendingPanelList" class="pending-panel__list"></ul>
-    <button type="button" id="pendingConfirmAll" class="pending-panel__open">Confirmar todas as leituras</button>
-    <button type="button" id="pendingPanelOpenAll" class="pending-panel__open">Abrir fila completa</button>
-  </div>
-
-  <!-- Review queue: review modal (Task 13+14) -->
-  <div id="reviewModal" class="review-modal hidden" role="dialog" aria-modal="true">
-    <div class="review-modal__backdrop"></div>
-    <div class="review-modal__panel">
-      <header class="review-modal__header">
-        <span id="reviewModalTitle">Revisar lâmina</span>
-        <button type="button" id="reviewModalClose" aria-label="Fechar">×</button>
-      </header>
-      <div class="review-modal__body">
-        <div class="review-modal__image">
-          <div class="review-modal__image-toggle">
-            <button type="button" data-which="label" class="active">label.jpg</button>
-            <button type="button" data-which="slide2">slide2.jpg</button>
+      <div class="form">
+        <dl class="dados">
+          <dt>Leitura</dt><dd id="ocrReading">--</dd>
+          <dt>Arquivo</dt><dd id="ocrFilename">--</dd>
+          <dt>Situação</dt><dd id="ocrStatusValue">--</dd>
+        </dl>
+        <div class="field">
+          <label for="ocrManualInput">Novo nome</label>
+          <div class="field-row">
+            <input type="text" id="ocrManualInput" class="t-id" placeholder="AP26000388A1, RE26000003 ou 26-388A" autocomplete="off" spellcheck="false">
+            <button class="btn btn-primario" id="btnManualSave" disabled>Renomear</button>
           </div>
-          <img id="reviewImage" alt="Lâmina">
-          <div id="reviewImageEmpty" class="review-modal__image-empty hidden">Imagem indisponível</div>
+          <small id="ocrManualPreview"></small>
         </div>
-        <div class="review-modal__form">
-          <label class="review-field">
-            <span>Nome da lâmina</span>
-            <input type="text" id="reviewFilename" autocomplete="off" spellcheck="false">
-            <small id="reviewFilenameHint">Leitura do OCR</small>
-            <small id="reviewFilenameError" class="error hidden"></small>
-          </label>
-          <footer class="review-modal__actions">
-            <button type="button" id="reviewRescan" class="secondary">Marcar para rescanear</button>
-            <div class="spacer"></div>
-            <button type="button" id="reviewConfirm" class="primary" disabled>Confirmar e próxima</button>
-          </footer>
+        <p class="t-2" id="ocrStatusMsg"></p>
+        <div class="form-actions">
+          <button class="btn" id="btnReocr">Ler etiqueta de novo</button>
+          <button class="btn" id="btnCloseOcr">Fechar</button>
         </div>
       </div>
     </div>
   </div>
+</div>
 
-  <script src="/app.js"></script>
+<!-- Revisar lâmina pendente -->
+<div id="reviewModal" class="modal-veu hidden">
+  <div class="modal modal-revisao" role="dialog" aria-modal="true" aria-labelledby="reviewModalTitle">
+    <header class="modal-head">
+      <h2 class="t-secao" id="reviewModalTitle">Revisar lâmina</h2>
+      <button type="button" class="btn btn-icone" id="reviewModalClose" aria-label="Fechar">&times;</button>
+    </header>
+    <div class="modal-body modal-colunas">
+      <div class="foto">
+        <div class="segment segment-pequeno review-modal__image-toggle">
+          <button type="button" data-which="label" class="active">Etiqueta</button>
+          <button type="button" data-which="slide2">Lâmina inteira</button>
+        </div>
+        <div class="foto-quadro">
+          <img id="reviewImage" alt="Foto da etiqueta">
+          <div id="reviewImageEmpty" class="foto-vazia hidden">Foto não disponível</div>
+        </div>
+      </div>
+      <div class="form">
+        <div class="field">
+          <label for="reviewFilename">Nome da lâmina</label>
+          <input type="text" id="reviewFilename" class="t-id" autocomplete="off" spellcheck="false">
+          <small id="reviewFilenameHint">Leitura do OCR</small>
+          <small id="reviewFilenameError" class="erro hidden"></small>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="reviewRescan">Rescanear</button>
+          <span class="spacer"></span>
+          <button type="button" class="btn btn-primario" id="reviewConfirm" disabled>Confirmar e próxima</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
 </body>
 </html>
