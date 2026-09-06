@@ -12,7 +12,7 @@
  * in January is accepted.
  */
 
-const CASE_BASE_RE = /^(AP|PA|IM|C)(\d{2})(\d{4,10})$/i;
+const CASE_BASE_RE = /^(AP|PA|IM|C|RE)(\d{2})(\d{4,10})$/i;
 
 /**
  * @param {string} caseBase e.g. "AP26002614"

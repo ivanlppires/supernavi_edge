@@ -6,6 +6,7 @@ describe('parseCaseBase', () => {
   it('parses prefix, year and number', () => {
     assert.deepStrictEqual(parseCaseBase('AP26002614'), { prefix: 'AP', year: '26', number: 2614 });
     assert.deepStrictEqual(parseCaseBase('C26000588'), { prefix: 'C', year: '26', number: 588 });
+    assert.deepStrictEqual(parseCaseBase('RE26000003'), { prefix: 'RE', year: '26', number: 3 });
   });
 
   it('normalizes PA to AP and lowercase input', () => {
@@ -35,6 +36,8 @@ describe('isImplausiblyLowCaseNumber', () => {
 
   it('cannot judge across prefixes or years', () => {
     assert.equal(isImplausiblyLowCaseNumber('C26000002', 'AP26002643'), false);
+    // RE has its own sequence: RE26000003 is fine while AP is at 2643
+    assert.equal(isImplausiblyLowCaseNumber('RE26000003', 'AP26002643'), false);
     assert.equal(isImplausiblyLowCaseNumber('AP25000002', 'AP26002643'), false);
   });
 
