@@ -17,7 +17,6 @@ button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 img { max-width: 100%; display: block; }
 svg { display: block; }
-.hidden { display: none; }
 .spacer { flex: 1; }
 
 :focus-visible { outline: 2px solid var(--sn-azul); outline-offset: 2px; border-radius: var(--sn-raio-controle); }
@@ -158,7 +157,7 @@ svg { display: block; }
 .service { display: flex; align-items: center; gap: var(--sn-esp-3); min-width: 0; }
 .service-text { display: flex; flex-direction: column; min-width: 0; }
 .service-name { font-weight: 500; }
-.block-detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.block-detail { line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .block {
   position: relative; flex: none; width: 44px; height: 44px;
   border-radius: var(--sn-raio-bloco);
@@ -182,7 +181,8 @@ svg { display: block; }
   border-bottom: 1px solid var(--sn-borda);
 }
 .row:hover { background: var(--sn-cartao); }
-.row-id { font-size: var(--sn-t-id); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: left; }
+.row-id { font-size: var(--sn-t-id); font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: left; background: none; border: 0; padding: 0; color: var(--sn-texto); }
+.row-id:hover { text-decoration: underline; }
 .row-id.sem-nome { color: var(--sn-atencao); font-weight: 500; }
 .row-file { color: var(--sn-texto-2); font-size: var(--sn-t-lista); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-time { color: var(--sn-texto-3); font-size: var(--sn-t-lista); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -225,7 +225,7 @@ svg { display: block; }
 .review-card-actions { display: flex; gap: var(--sn-esp-2); margin-top: var(--sn-esp-3); }
 
 /* ---- Forms ---- */
-.form { max-width: 560px; }
+.form { max-width: 560px; margin-top: var(--sn-esp-4); }
 .form .t-secao { margin: var(--sn-esp-5) 0 var(--sn-esp-3); }
 .form .t-secao:first-child { margin-top: 0; }
 .field { display: flex; flex-direction: column; gap: var(--sn-esp-1); margin-bottom: var(--sn-esp-4); }
@@ -250,7 +250,7 @@ svg { display: block; }
 
 /* ---- Modals ---- */
 .modal-veu { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: var(--sn-veu); z-index: 50; padding: var(--sn-esp-5); }
-.modal-veu.visible, .modal-veu.aberto { display: flex; }
+.modal-veu.visible, .modal-veu.active, .modal-veu.aberto { display: flex; }
 .modal { width: 100%; max-height: 90vh; overflow: auto; border: 1px solid var(--sn-borda); border-radius: var(--sn-raio-cartao); background: var(--sn-cartao); box-shadow: var(--sn-sombra); }
 .modal-timeline { max-width: 640px; }
 .modal-renomear, .modal-revisao { max-width: 720px; }
@@ -303,3 +303,6 @@ svg { display: block; }
   .row-file { display: none; }
   .modal-colunas { grid-template-columns: 1fr; }
 }
+
+/* Utility kept last so it wins over component display rules of equal specificity */
+.hidden { display: none; }

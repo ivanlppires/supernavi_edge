@@ -18,6 +18,8 @@
   let slidesData = [];
   let eventSource = null;
   let dashboardTimer = null;
+  // Assigned inside the review-queue block; the tab router calls it.
+  let refreshPending = async () => {};
 
   // ---- DOM references (cached after DOMContentLoaded) ----
   const $ = (sel) => document.querySelector(sel);
@@ -127,6 +129,8 @@
     }
   }
 
+  function capitalize(str) { return str ? str.charAt(0).toUpperCase() + str.slice(1) : ''; }
+
   function setBlock(id, state, detail) {
     const wrap = $('#' + id);
     if (!wrap) return;
@@ -153,7 +157,7 @@
       const sc = data.scanner;
       let state = 'unknown'; let detail = '--'; let dot = 'unknown'; let label = 'Scanner';
       if (!sc.enabled) { state = 'atencao'; detail = 'Desligado'; dot = 'atencao'; }
-      else if (sc.state === 'running') { state = 'ok'; detail = (data.config?.scannerType || 'scanner') + ' \u00b7 ' + (sc.totalDiscovered ?? 0) + ' l\u00e2minas'; dot = 'ok'; }
+      else if (sc.state === 'running') { state = 'ok'; detail = capitalize(data.config?.scannerType || 'scanner') + ' \u00b7 ' + (sc.totalDiscovered ?? 0) + ' l\u00e2minas'; dot = 'ok'; }
       else if (sc.state === 'error') { state = 'falha'; detail = sc.error || 'Erro'; dot = 'falha'; label = 'Scanner com erro'; }
       else { state = 'atencao'; detail = sc.state || 'Parado'; dot = 'atencao'; }
       setBlock('blk-scanner', state, detail);
@@ -1472,7 +1476,7 @@
     const body = $('#pipelineModalBody');
     if (!overlay) return;
 
-    setText(title, 'Timeline da Lâmina');
+    setText(title, 'Timeline da l\u00e2mina');
     setText(subtitle, filenameHint || slideId.substring(0, 16));
     clearChildren(body);
     body.appendChild(el('div', { className: 'pipeline-loading', textContent: 'Carregando...' }));
@@ -1739,7 +1743,7 @@
     slides.forEach((sl) => list.appendChild(buildReviewCard(sl)));
   }
 
-  async function refreshPending() {
+  refreshPending = async function () {
     try {
       const r = await fetch('/v1/pending-slides');
       if (!r.ok) throw new Error(r.statusText);
@@ -1751,7 +1755,7 @@
     updatePendingBadge(pendingData.total);
     renderReviewStrip();
     renderReviewList();
-  }
+  };
 
   async function confirmAllPending(statusEl) {
     if (statusEl) statusEl.textContent = 'Confirmando...';
@@ -1969,6 +1973,7 @@
     initFailuresControls();
     initPipelineModal();
     startDashboardPolling();
+    fetchSlides();
     initSSE();
   }
 

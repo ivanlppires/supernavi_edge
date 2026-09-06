@@ -54,7 +54,7 @@ export function buildFixtures(cenario = 'normal') {
       jobs: { pending: vazio ? 0 : 3, running: vazio ? 0 : 1, active: vazio ? [] : [{ slide_id: id(3), original_filename: '_20260906091239.svs', type: 'BIGTIFF', status: 'running' }] },
       sync: { stuckCount: stuckSync.length },
     },
-    slides: { slides }, pending: { total: pending.length, slides: pending },
+    slides: { items: slides }, pending: { total: pending.length, slides: pending },
     failures: { failures, stuckSync, total: failures.length, stuckSyncTotal: stuckSync.length },
     config: { edgeKey: '', slidesDirHost: '/Volumes/Motic/Completed', scannerType: 'motic', stableSeconds: 15 },
   };
@@ -86,17 +86,27 @@ export function startMock(port = 8099, defaultCenario = 'normal') {
       res.writeHead(200, { 'content-type': 'image/svg+xml' }); return res.end(labelSvg('thumb'));
     }
     if ((m = p.match(/^\/v1\/slides\/([0-9a-f]{64})\/pipeline$/))) {
-      return json(res, { slideId: m[1], events: [
-        { stage: 'ingest', level: 'info', message: 'Arquivo estável, registrado', created_at: iso(120) },
-        { stage: 'bigtiff', level: 'info', message: 'BigTIFF pipeline complete', created_at: iso(90) },
-        { stage: 'sync', level: 'info', message: 'Synced to cloud: slide/registered', created_at: iso(88) },
-        { stage: 'preview', level: 'error', message: 'Label photo upload to the cloud failed', created_at: iso(30), details: { code: 'ETIMEDOUT' } },
-      ] });
+      const sl = fx.slides.items.find(x => x.slideId === m[1]) || fx.slides.items[0] || { slideId: m[1], originalFilename: 'x.svs', status: 'ready', format: 'svs' };
+      return json(res, {
+        slide: { slideId: m[1], originalFilename: sl.originalFilename, status: sl.status, format: sl.format, tilegenStatus: 'done', cloudUploadStatus: 'done', latestError: sl.latestError || null, latestErrorStage: sl.latestErrorStage || null, latestErrorAt: sl.latestError ? iso(30) : null, createdAt: sl.createdAt || iso(120) },
+        advice: sl.latestError ? { severity: 'error', reason: 'Faltou memória ao gerar o BigTIFF', suggestion: 'Feche outros programas e reprocesse', action: 'reprocess' } : null,
+        events: [
+          { id: 1, stage: 'ingest', level: 'info', message: 'Arquivo estável, registrado', details: null, createdAt: iso(120) },
+          { id: 2, stage: 'bigtiff', level: 'info', message: 'BigTIFF pipeline complete', details: null, createdAt: iso(90) },
+          { id: 3, stage: 'sync', level: 'info', message: 'Synced to cloud: slide/registered', details: null, createdAt: iso(88) },
+          { id: 4, stage: 'preview', level: 'error', message: 'Label photo upload to the cloud failed', details: { code: 'ETIMEDOUT' }, createdAt: iso(30) },
+        ],
+        jobs: [
+          { id: 10, type: 'P0', status: 'done', error: null, createdAt: iso(121), updatedAt: iso(119) },
+          { id: 11, type: 'BIGTIFF', status: sl.status === 'failed' ? 'failed' : 'done', error: sl.latestError || null, createdAt: iso(118), updatedAt: iso(90) },
+        ],
+        syncFailures: [],
+      });
     }
     if (p === '/v1/events') { res.writeHead(200, { 'content-type': 'text/event-stream' }); res.write('event: connected\ndata: {}\n\n'); return; }
     if (req.method === 'POST' && p.startsWith('/v1/')) return json(res, { success: true, ok: true, confirmed: 16, skipped: 1, failed: [], queued: 104, message: 'ok' });
     const file = join(ROOT, p === '/' ? 'index.html' : p);
-    try { const body = await readFile(file); res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream' }); res.end(body); }
+    try { const body = await readFile(file); res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream', 'cache-control': 'no-store' }); res.end(body); }
     catch { res.writeHead(404); res.end('not found'); }
   });
   return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)));

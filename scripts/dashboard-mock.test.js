@@ -18,7 +18,7 @@ describe('dashboard-mock', () => {
     assert.equal(d.tunnel.connected, true);
     assert.equal(d.slides.total, 119);
     const s = await (await fetch(`${base}/v1/slides`)).json();
-    assert.ok(Array.isArray(s.slides) && s.slides.length >= 10);
+    assert.ok(Array.isArray(s.items) && s.items.length >= 10);
     const p = await (await fetch(`${base}/v1/pending-slides`)).json();
     assert.equal(p.total, 17);
     assert.equal(p.slides.length, 17);
