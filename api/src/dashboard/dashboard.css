@@ -45,6 +45,7 @@ svg { display: block; }
   border-bottom: 1px solid var(--sn-borda);
 }
 .brand { display: flex; align-items: center; gap: var(--sn-esp-3); }
+.brand-mark { width: 28px; height: 28px; flex: none; }
 .brand-name { font-size: var(--sn-t-id); font-weight: 700; }
 .brand-agent { color: var(--sn-texto-2); font-size: var(--sn-t-lista); }
 .topbar-health { display: flex; gap: var(--sn-esp-5); font-size: var(--sn-t-lista); color: var(--sn-texto-2); }
