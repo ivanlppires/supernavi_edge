@@ -6,43 +6,54 @@
   <title>SuperNavi Edge</title>
   <link rel="stylesheet" href="/tokens.css">
   <link rel="stylesheet" href="/dashboard.css">
+  <script>
+    // Aplica o tema antes da primeira pintura, para não piscar branco no escuro.
+    try {
+      var t = localStorage.getItem('supernavi_tema');
+      if (t === 'claro' || t === 'escuro') document.documentElement.dataset.theme = t;
+    } catch (e) { /* armazenamento bloqueado: fica na preferência do sistema */ }
+  </script>
 </head>
 <body>
 <div class="app">
 
   <header class="topbar">
     <div class="brand">
-      <img class="brand-mark" src="/logo-mark.svg" width="28" height="28" alt="SuperNavi">
+      <img class="brand-mark" id="brandMark" src="/logo-mark-claro.png" width="24" height="24" alt="SuperNavi">
       <span class="brand-name">SuperNavi Edge</span>
       <span class="brand-agent" id="hdrAgent">Agente --</span>
     </div>
     <div class="topbar-health" aria-live="polite">
       <span class="health"><span class="dot" id="hdrTunnelDot"></span><span id="hdrTunnelText">Túnel</span></span>
       <span class="health"><span class="dot" id="hdrScannerDot"></span><span id="hdrScannerText">Scanner</span></span>
+      <button class="btn-icone" id="btnTema" aria-label="Alternar entre claro e escuro" title="Alternar entre claro e escuro">
+        <svg class="icone-claro" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2M12 19.5v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M2.5 12h2M19.5 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"/></svg>
+        <svg class="icone-escuro hidden" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"/></svg>
+      </button>
     </div>
   </header>
 
   <nav class="rail" id="tabBar" aria-label="Seções">
     <button class="tab-btn active" data-tab="status">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>
       <span>Visão geral</span>
     </button>
     <button class="tab-btn" data-tab="slides">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 9.5h17"/></svg>
       <span>Lâminas</span>
     </button>
     <button class="tab-btn" data-tab="review">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11.5l2.5 2.5L21 4.5"/><path d="M20.5 12v7a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg>
       <span>Revisão</span>
       <span class="rail-badge hidden" id="pendingBadge" title="Aguardando confirmação"><span id="pendingCount">0</span></span>
     </button>
     <button class="tab-btn" data-tab="failures">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.6 3.9 2.5 17.6a1.7 1.7 0 0 0 1.4 2.6h16.2a1.7 1.7 0 0 0 1.4-2.6L13.4 3.9a1.7 1.7 0 0 0-2.8 0z"/><path d="M12 9.5v4"/><path d="M12 17h.01"/></svg>
       <span>Falhas</span>
       <span class="rail-badge rail-badge-falha" id="failuresBadge" style="display:none">0</span>
     </button>
     <button class="tab-btn" data-tab="activity">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.5 12h-4l-3 8.5-5-17-3 8.5h-4"/></svg>
       <span>Atividade</span>
     </button>
     <button class="tab-btn" data-tab="settings">
@@ -55,49 +66,69 @@
 
     <!-- Visão geral -->
     <section class="tab-panel active" id="panel-status">
-      <div class="review-strip" id="ovReview">
-        <div class="review-strip-head">
-          <h2 class="t-secao">Aguardando sua confirmação</h2>
-          <span class="t-grande" id="ovReviewCount">0</span>
-          <div class="review-strip-actions">
-            <button class="btn" id="ovReviewConfirmAll">Confirmar todas</button>
-            <button class="btn btn-primario" id="ovReviewOpen">Abrir revisão</button>
+      <div class="section-head"><h1 class="t-titulo">Visão geral</h1></div>
+
+      <div class="grupo">
+        <div class="review-strip" id="ovReview">
+          <div class="review-strip-head">
+            <h2 class="review-strip-titulo">Aguardando sua confirmação</h2>
+            <span class="contagem" id="ovReviewCount">0</span>
+            <div class="review-strip-actions">
+              <button class="btn" id="ovReviewConfirmAll">Confirmar todas</button>
+              <button class="btn btn-primario" id="ovReviewOpen">Revisar</button>
+            </div>
+          </div>
+          <div class="review-thumbs" id="ovReviewThumbs"></div>
+          <p class="review-strip-empty hidden" id="ovReviewEmpty">Nenhuma lâmina aguardando confirmação.</p>
+        </div>
+      </div>
+
+      <h2 class="secao">Serviços</h2>
+      <div class="grupo" id="statusGrid">
+        <div class="linha" id="blk-tunnel"><span class="dot"></span><div class="linha-texto"><span class="linha-titulo">Túnel</span></div><span class="linha-fim block-detail">--</span></div>
+        <div class="linha" id="blk-scanner"><span class="dot"></span><div class="linha-texto"><span class="linha-titulo">Scanner</span></div><span class="linha-fim block-detail">--</span></div>
+        <div class="linha" id="blk-watcher"><span class="dot"></span><div class="linha-texto"><span class="linha-titulo">Entrada</span></div><span class="linha-fim block-detail">--</span></div>
+        <div class="linha" id="blk-db"><span class="dot"></span><div class="linha-texto"><span class="linha-titulo">Banco</span></div><span class="linha-fim block-detail">--</span></div>
+        <div class="linha" id="blk-queue"><span class="dot"></span><div class="linha-texto"><span class="linha-titulo">Fila</span></div><span class="linha-fim block-detail">--</span></div>
+        <div class="linha" id="blk-processor"><span class="dot"></span><div class="linha-texto"><span class="linha-titulo">Processador</span></div><span class="linha-fim block-detail" id="processorBody">--</span></div>
+        <div class="linha" id="blk-disk"><span class="dot"></span><div class="linha-texto"><span class="linha-titulo">Disco</span></div><span class="linha-fim block-detail">--</span></div>
+      </div>
+
+      <h2 class="secao">Manutenção</h2>
+      <div class="grupo">
+        <div class="linha">
+          <div></div>
+          <div class="linha-texto">
+            <span class="linha-titulo">Republicar previews</span>
+            <span class="linha-detalhe">Reenvia as miniaturas das lâminas já processadas.</span>
+          </div>
+          <div class="linha-fim">
+            <span class="maint-status" id="republishStatus"></span>
+            <button class="btn-texto" id="btnRepublishPreviews">Republicar</button>
           </div>
         </div>
-        <div class="review-thumbs" id="ovReviewThumbs"></div>
-        <p class="review-strip-empty t-2 hidden" id="ovReviewEmpty">Nenhuma lâmina aguardando confirmação.</p>
-      </div>
-
-      <div class="services-head">
-        <h2 class="t-secao">Serviços</h2>
-        <div class="maintenance">
-          <button class="btn btn-pequeno" id="btnRepublishPreviews">Republicar previews</button>
-          <span class="maint-status t-3" id="republishStatus"></span>
-          <button class="btn btn-pequeno" id="btnPublishLabels">Publicar etiquetas</button>
-          <span class="maint-status t-3" id="publishLabelsStatus"></span>
+        <div class="linha">
+          <div></div>
+          <div class="linha-texto">
+            <span class="linha-titulo">Publicar etiquetas</span>
+            <span class="linha-detalhe">Envia à nuvem a foto da etiqueta das lâminas antigas.</span>
+          </div>
+          <div class="linha-fim">
+            <span class="maint-status" id="publishLabelsStatus"></span>
+            <button class="btn-texto" id="btnPublishLabels">Publicar</button>
+          </div>
         </div>
       </div>
-      <div class="blocks" id="statusGrid">
-        <div class="service" id="blk-tunnel"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Túnel</span><span class="block-detail t-3">--</span></div></div>
-        <div class="service" id="blk-scanner"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Scanner</span><span class="block-detail t-3">--</span></div></div>
-        <div class="service" id="blk-watcher"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Entrada</span><span class="block-detail t-3">--</span></div></div>
-        <div class="service" id="blk-db"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Banco</span><span class="block-detail t-3">--</span></div></div>
-        <div class="service" id="blk-queue"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Fila</span><span class="block-detail t-3">--</span></div></div>
-        <div class="service" id="blk-processor"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Processador</span><span class="block-detail t-3" id="processorBody">--</span></div></div>
-        <div class="service" id="blk-disk"><span class="block" data-state="unknown"></span><div class="service-text"><span class="service-name">Disco</span><span class="block-detail t-3">--</span></div></div>
-      </div>
 
-      <div class="section-head">
-        <h2 class="t-secao">Lâminas recentes</h2>
-        <button class="btn btn-link" data-goto="slides">Ver todas</button>
-      </div>
-      <div class="rows" id="recentSlides"></div>
+      <h2 class="secao secao-linha"><span>Lâminas recentes</span><span class="spacer"></span><button class="btn-texto" data-goto="slides">Ver todas</button></h2>
+      <div class="grupo" id="recentSlides"></div>
     </section>
 
     <!-- Lâminas -->
     <section class="tab-panel" id="panel-slides">
       <div class="section-head">
-        <h2 class="t-pagina">Lâminas</h2>
+        <h1 class="t-titulo">Lâminas</h1>
+        <span class="spacer"></span>
         <span class="t-2 tnum" id="slidesCount">0 lâminas</span>
       </div>
       <div class="segment" id="filterButtons" role="tablist">
@@ -106,94 +137,135 @@
         <button class="filter-btn" data-filter="processing">Processando</button>
         <button class="filter-btn" data-filter="failed">Erro</button>
       </div>
-      <div class="rows" id="slidesList">
-        <p class="empty" id="slidesEmpty">Nenhuma lâmina encontrada com este filtro.</p>
+      <div class="grupo" id="slidesList" style="margin-top:16px">
+        <p class="vazio" id="slidesEmpty">Nenhuma lâmina encontrada com este filtro.</p>
       </div>
     </section>
 
     <!-- Revisão -->
     <section class="tab-panel" id="panel-review">
       <div class="section-head">
-        <h2 class="t-pagina">Revisão</h2>
+        <h1 class="t-titulo">Revisão</h1>
+        <span class="spacer"></span>
         <span class="t-2 tnum" id="reviewQueueCount">0 aguardando</span>
         <button class="btn" id="reviewConfirmAll">Confirmar todas</button>
       </div>
-      <p class="t-2">Confira a foto da etiqueta e confirme o nome lido. Um nome só entra no PathoWeb depois que uma pessoa confirma.</p>
+      <p class="t-2" style="margin-bottom:16px">Confira a foto da etiqueta e confirme o nome lido. Um nome só entra no PathoWeb depois que uma pessoa confirma.</p>
       <div class="review-cards" id="reviewList"></div>
-      <p class="empty hidden" id="reviewEmpty">Nenhuma lâmina aguardando confirmação.</p>
+      <p class="vazio hidden" id="reviewEmpty">Nenhuma lâmina aguardando confirmação.</p>
     </section>
 
     <!-- Falhas -->
     <section class="tab-panel" id="panel-failures">
       <div class="section-head">
-        <h2 class="t-pagina">Falhas</h2>
+        <h1 class="t-titulo">Falhas</h1>
+        <span class="spacer"></span>
         <span class="t-2" id="failuresSubtitle">--</span>
-        <button class="btn btn-pequeno" id="refreshFailures">Atualizar</button>
+        <button class="btn" id="refreshFailures">Atualizar</button>
       </div>
-      <h3 class="t-secao">Falhas de processamento</h3>
-      <div class="rows" id="failuresList">
-        <p class="empty" id="failuresEmpty">Nenhuma lâmina com falha. O scanner segue sendo monitorado.</p>
+      <h2 class="secao">Falhas de processamento</h2>
+      <div class="grupo" id="failuresList">
+        <p class="vazio" id="failuresEmpty">Nenhuma lâmina com falha. O scanner segue sendo monitorado.</p>
       </div>
       <div id="stuckSyncSection" style="display:none">
-        <h3 class="t-secao">Sincronização travada</h3>
-        <div class="rows" id="stuckSyncList"></div>
+        <h2 class="secao">Sincronização travada</h2>
+        <div class="grupo" id="stuckSyncList"></div>
       </div>
     </section>
 
     <!-- Atividade -->
     <section class="tab-panel" id="panel-activity">
       <div class="section-head">
-        <h2 class="t-pagina">Atividade</h2>
-        <button class="btn btn-pequeno" id="clearActivity">Limpar</button>
+        <h1 class="t-titulo">Atividade</h1>
+        <span class="spacer"></span>
+        <button class="btn" id="clearActivity">Limpar</button>
       </div>
-      <div class="rows" id="activityFeed">
-        <p class="empty" id="activityEmpty">Nenhuma atividade registrada ainda.</p>
+      <div class="grupo" id="activityFeed">
+        <p class="vazio" id="activityEmpty">Nenhuma atividade registrada ainda.</p>
       </div>
     </section>
 
     <!-- Configurações -->
     <section class="tab-panel" id="panel-settings">
-      <div class="section-head"><h2 class="t-pagina">Configurações</h2></div>
-      <form class="form" id="settingsForm" onsubmit="return false">
-        <h3 class="t-secao">Conexão com a nuvem</h3>
-        <div class="field">
-          <label for="cfgEdgeKey">Chave do edge</label>
-          <div class="field-row">
-            <input type="password" id="cfgEdgeKey" placeholder="Cole a chave gerada no painel da nuvem" autocomplete="off">
-            <button type="button" class="btn btn-icone" id="toggleEdgeKey" aria-label="Mostrar ou ocultar chave">
-              <svg viewBox="0 0 24 24" class="icon-eye" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-              <svg viewBox="0 0 24 24" class="icon-eye-off" style="display:none" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
-            </button>
+      <div class="section-head"><h1 class="t-titulo">Configurações</h1></div>
+
+      <h2 class="secao">Aparência</h2>
+      <div class="grupo">
+        <div class="linha">
+          <div></div>
+          <div class="linha-texto">
+            <span class="linha-titulo">Tema</span>
+            <span class="linha-detalhe">Sistema segue a preferência do computador.</span>
           </div>
-          <small>Gerada no painel de administração da nuvem. Identifica este edge no túnel.</small>
+          <div class="segment" id="temaSegmento">
+            <button data-tema="sistema">Sistema</button>
+            <button data-tema="claro">Claro</button>
+            <button data-tema="escuro">Escuro</button>
+          </div>
         </div>
-        <div class="edge-info" id="edgeInfo" style="display:none">
-          <span class="dot ok"></span>
-          <span><strong id="edgeInfoName">--</strong> <span class="t-2" id="edgeInfoLab">--</span></span>
+      </div>
+
+      <form id="settingsForm" onsubmit="return false">
+        <h2 class="secao">Conexão com a nuvem</h2>
+        <div class="grupo">
+          <div class="linha">
+            <div></div>
+            <div class="linha-texto">
+              <span class="linha-titulo">Chave do edge</span>
+              <span class="linha-detalhe">Gerada no painel de administração da nuvem.</span>
+            </div>
+            <div class="campo-linha" style="min-width:280px">
+              <input type="password" id="cfgEdgeKey" placeholder="Cole a chave" autocomplete="off">
+              <button type="button" class="btn-icone" id="toggleEdgeKey" aria-label="Mostrar ou ocultar chave">
+                <svg viewBox="0 0 24 24" class="icon-eye" aria-hidden="true"><path d="M2 12s3.8-7 10-7 10 7 10 7-3.8 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg viewBox="0 0 24 24" class="icon-eye-off hidden" aria-hidden="true"><path d="M17.9 17.9A10 10 0 0 1 12 19c-6.2 0-10-7-10-7a18 18 0 0 1 5-5.9M9.9 4.2A9 9 0 0 1 12 4c6.2 0 10 7 10 7a18 18 0 0 1-2.1 3.2m-6.7-1a3 3 0 1 1-4.2-4.2"/><path d="M2 2l20 20"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="linha" id="edgeInfo" style="display:none">
+            <span class="dot ok"></span>
+            <div class="linha-texto"><span class="linha-titulo" id="edgeInfoName">--</span><span class="linha-detalhe" id="edgeInfoLab">--</span></div>
+            <div></div>
+          </div>
         </div>
 
-        <h3 class="t-secao">Scanner e pasta</h3>
-        <div class="field">
-          <label for="cfgSlidesDir">Pasta de lâminas</label>
-          <input type="text" id="cfgSlidesDir" placeholder="/caminho/para/laminas">
-          <small>Pasta do scanner monitorada no computador.</small>
+        <h2 class="secao">Scanner e pasta</h2>
+        <div class="grupo">
+          <div class="linha">
+            <div></div>
+            <div class="linha-texto">
+              <span class="linha-titulo">Pasta de lâminas</span>
+              <span class="linha-detalhe">Pasta do scanner monitorada no computador.</span>
+            </div>
+            <div style="min-width:280px"><input type="text" id="cfgSlidesDir" placeholder="/caminho/para/laminas" style="width:100%"></div>
+          </div>
+          <div class="linha">
+            <div></div>
+            <div class="linha-texto"><span class="linha-titulo">Tipo de scanner</span></div>
+            <div style="min-width:280px">
+              <select id="cfgScannerType" style="width:100%">
+                <option value="unknown">Desconhecido</option>
+                <option value="motic">Motic</option>
+                <option value="leica">Leica</option>
+                <option value="hamamatsu">Hamamatsu</option>
+                <option value="3dhistech">3DHistech</option>
+                <option value="zeiss">Zeiss</option>
+              </select>
+            </div>
+          </div>
+          <div class="linha">
+            <div></div>
+            <div class="linha-texto">
+              <span class="linha-titulo">Tempo de estabilidade</span>
+              <span class="linha-detalhe">Espera depois da última modificação do arquivo antes de ler a lâmina.</span>
+            </div>
+            <div style="min-width:280px; display:flex; align-items:center; gap:12px">
+              <input type="range" id="cfgStableSeconds" min="5" max="60" value="10" step="1">
+              <span class="tnum t-2" style="white-space:nowrap"><span id="stableSecondsValue">10</span> s</span>
+            </div>
+          </div>
         </div>
-        <div class="field">
-          <label for="cfgScannerType">Tipo de scanner</label>
-          <select id="cfgScannerType">
-            <option value="unknown">Desconhecido</option>
-            <option value="motic">Motic</option>
-            <option value="leica">Leica</option>
-            <option value="hamamatsu">Hamamatsu</option>
-            <option value="3dhistech">3DHistech</option>
-            <option value="zeiss">Zeiss</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="cfgStableSeconds">Tempo de estabilidade: <span class="tnum" id="stableSecondsValue">10</span> s</label>
-          <input type="range" id="cfgStableSeconds" min="5" max="60" value="10" step="1">
-          <small>Segundos de espera depois da última modificação do arquivo antes de ler a lâmina.</small>
-        </div>
+
         <div class="form-actions">
           <button type="button" class="btn btn-primario" id="saveConfig">Salvar configuração</button>
           <span class="t-2" id="saveStatus"></span>
@@ -209,12 +281,12 @@
   <div class="modal modal-timeline" role="dialog" aria-modal="true" aria-labelledby="pipelineModalTitle">
     <header class="modal-head">
       <div>
-        <h2 class="t-secao" id="pipelineModalTitle">Timeline da lâmina</h2>
-        <div class="t-2" id="pipelineModalSubtitle">--</div>
+        <h2 class="t-destaque" id="pipelineModalTitle">Timeline da lâmina</h2>
+        <div class="t-3" id="pipelineModalSubtitle">--</div>
       </div>
-      <button class="btn btn-icone" id="pipelineModalClose" aria-label="Fechar">&times;</button>
+      <button class="btn-icone btn-fechar" id="pipelineModalClose" aria-label="Fechar">&times;</button>
     </header>
-    <div class="modal-body" id="pipelineModalBody"><p class="t-2">Carregando...</p></div>
+    <div class="modal-body" id="pipelineModalBody"><p class="pipeline-loading">Carregando...</p></div>
   </div>
 </div>
 
@@ -222,17 +294,17 @@
 <div class="modal-veu" id="ocrModal">
   <div class="modal modal-renomear" role="dialog" aria-modal="true">
     <header class="modal-head">
-      <h2 class="t-secao">Renomear lâmina</h2>
+      <h2 class="t-destaque">Renomear lâmina</h2>
       <div class="modal-nav">
-        <button class="btn btn-icone" id="ocrPrev" aria-label="Anterior">&#8249;</button>
-        <span class="t-2 tnum" id="ocrNavCounter">1 / 1</span>
-        <button class="btn btn-icone" id="ocrNext" aria-label="Próxima">&#8250;</button>
+        <button class="btn-icone" id="ocrPrev" aria-label="Anterior">&#8249;</button>
+        <span class="t-3 tnum" id="ocrNavCounter">1 / 1</span>
+        <button class="btn-icone" id="ocrNext" aria-label="Próxima">&#8250;</button>
       </div>
-      <button class="btn btn-icone" id="ocrModalClose" aria-label="Fechar">&times;</button>
+      <button class="btn-icone btn-fechar" id="ocrModalClose" aria-label="Fechar">&times;</button>
     </header>
     <div class="modal-body modal-colunas">
-      <div class="foto">
-        <div class="segment segment-pequeno">
+      <div>
+        <div class="segment" style="margin-bottom:12px">
           <button class="ocr-tab active" data-tab="slide2">Lâmina</button>
           <button class="ocr-tab" data-tab="label">Etiqueta</button>
         </div>
@@ -242,21 +314,21 @@
           <div class="foto-vazia" id="ocrLabelPlaceholder" style="display:none">Foto não disponível</div>
         </div>
       </div>
-      <div class="form">
+      <div>
         <dl class="dados">
-          <dt>Leitura</dt><dd id="ocrReading">--</dd>
+          <dt>Leitura</dt><dd class="id" id="ocrReading">--</dd>
           <dt>Arquivo</dt><dd id="ocrFilename">--</dd>
           <dt>Situação</dt><dd id="ocrStatusValue">--</dd>
         </dl>
-        <div class="field">
+        <div class="campo">
           <label for="ocrManualInput">Novo nome</label>
-          <div class="field-row">
-            <input type="text" id="ocrManualInput" class="t-id" placeholder="AP26000388A1, RE26000003 ou 26-388A" autocomplete="off" spellcheck="false">
+          <div class="campo-linha">
+            <input type="text" class="id" id="ocrManualInput" placeholder="AP26000388A1, RE26000003 ou 26-388A" autocomplete="off" spellcheck="false">
             <button class="btn btn-primario" id="btnManualSave" disabled>Renomear</button>
           </div>
           <small id="ocrManualPreview"></small>
         </div>
-        <p class="t-2" id="ocrStatusMsg"></p>
+        <p class="t-3" id="ocrStatusMsg"></p>
         <div class="form-actions">
           <button class="btn" id="btnReocr">Ler etiqueta de novo</button>
           <button class="btn" id="btnCloseOcr">Fechar</button>
@@ -270,12 +342,12 @@
 <div id="reviewModal" class="modal-veu hidden">
   <div class="modal modal-revisao" role="dialog" aria-modal="true" aria-labelledby="reviewModalTitle">
     <header class="modal-head">
-      <h2 class="t-secao" id="reviewModalTitle">Revisar lâmina</h2>
-      <button type="button" class="btn btn-icone" id="reviewModalClose" aria-label="Fechar">&times;</button>
+      <h2 class="t-destaque" id="reviewModalTitle">Revisar lâmina</h2>
+      <button type="button" class="btn-icone btn-fechar" id="reviewModalClose" aria-label="Fechar">&times;</button>
     </header>
     <div class="modal-body modal-colunas">
-      <div class="foto">
-        <div class="segment segment-pequeno review-modal__image-toggle">
+      <div>
+        <div class="segment review-modal__image-toggle" style="margin-bottom:12px">
           <button type="button" data-which="label" class="active">Etiqueta</button>
           <button type="button" data-which="slide2">Lâmina inteira</button>
         </div>
@@ -284,10 +356,10 @@
           <div id="reviewImageEmpty" class="foto-vazia hidden">Foto não disponível</div>
         </div>
       </div>
-      <div class="form">
-        <div class="field">
+      <div>
+        <div class="campo">
           <label for="reviewFilename">Nome da lâmina</label>
-          <input type="text" id="reviewFilename" class="t-id" autocomplete="off" spellcheck="false">
+          <input type="text" class="id" id="reviewFilename" autocomplete="off" spellcheck="false">
           <small id="reviewFilenameHint">Leitura do OCR</small>
           <small id="reviewFilenameError" class="erro hidden"></small>
         </div>
@@ -300,6 +372,22 @@
     </div>
   </div>
 </div>
+
+<!-- Confirmação, no lugar do confirm do navegador -->
+<div class="modal-veu" id="confirmDialog">
+  <div class="modal modal-confirmar" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitulo" aria-describedby="confirmTexto">
+    <div class="modal-body">
+      <h2 class="t-destaque" id="confirmTitulo">Confirmar</h2>
+      <p class="t-2" id="confirmTexto" style="margin-top:6px"></p>
+    </div>
+    <div class="modal-acoes">
+      <button class="btn" id="confirmCancelar">Cancelar</button>
+      <button class="btn btn-primario" id="confirmOk">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div class="avisos" id="avisos" aria-live="polite"></div>
 
 <script src="/app.js"></script>
 </body>
