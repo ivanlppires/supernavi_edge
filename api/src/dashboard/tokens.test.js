@@ -45,6 +45,16 @@ describe('tokens.css', () => {
     }
   });
 
+  it('ships the real SuperNavi mark, not a hand-drawn stand-in', () => {
+    const svg = readFileSync(join(here, 'logo-mark.svg'), 'utf8');
+    // The official mark is a traced blocks logo: six paths, thousands of points.
+    assert.equal((svg.match(/<path/g) || []).length, 6);
+    assert.ok(svg.length > 20_000, 'mark looks like a simplified redraw');
+    const html = readFileSync(join(here, 'index.html'), 'utf8');
+    assert.match(html, /<img class="brand-mark" src="\/logo-mark\.svg"/);
+    assert.doesNotMatch(html, /<svg class="brand-mark"/);
+  });
+
   it('self-hosts the three Atkinson Hyperlegible Next faces', () => {
     const s = css();
     for (const w of [400, 500, 700]) {
