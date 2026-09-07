@@ -556,14 +556,23 @@ Lâminas enviadas antes desta versão: Configurações → Manutenção →
 
 ## Dashboard
 
-O dashboard (`api/src/dashboard/`) é HTML, CSS e JS estáticos servidos pela API.
-Identidade visual: `tokens.css` (cores e tipografia derivadas do logo, fonte
-Atkinson Hyperlegible Next hospedada em `fonts/`) e `dashboard.css` (componentes).
-Spec e plano: `docs/superpowers/specs/2026-09-06-edge-visual-identity-design.md`
-e `docs/superpowers/plans/2026-09-06-edge-visual-identity.md`.
+O dashboard (`api/src/dashboard/`) é HTML, CSS e JS estáticos servidos pela API,
+no idioma de janela do macOS com o azul da marca. `tokens.css` guarda as duas
+paletas, clara e escura, e o `@font-face`; `dashboard.css` guarda os componentes.
+Spec: `docs/superpowers/specs/2026-09-06-edge-visual-identity-design.md`.
 
-Seções: Visão geral (fila de revisão, blocos de serviços, lâminas recentes),
+Tema: claro por padrão, escuro pela preferência do sistema ou por escolha, que
+fica gravada em `localStorage` (`supernavi_tema`). Alterna pelo botão na barra
+superior ou em Configurações → Aparência.
+
+Tipografia: pilha do sistema na interface; Atkinson Hyperlegible Next, hospedada
+em `fonts/`, só nos identificadores de lâmina.
+
+Seções: Visão geral (fila de revisão, serviços, manutenção, lâminas recentes),
 Lâminas, Revisão, Falhas, Atividade, Configurações.
+
+`alert`, `confirm` e `prompt` do navegador não são usados: existem `confirmar()`
+e `avisar()` no `app.js`, e um teste falha se os nativos voltarem.
 
 Para revisar a interface sem o stack: `node scripts/dashboard-mock.js 8099 normal`
 (cenários `normal`, `falhas`, `vazio`) e abrir `http://127.0.0.1:8099/`.

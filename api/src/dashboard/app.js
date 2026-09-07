@@ -21,6 +21,118 @@
   // Assigned inside the review-queue block; the tab router calls it.
   let refreshPending = async () => {};
 
+  // =====================
+  //  Tema: sistema por padrão, escolha explícita vence e é lembrada
+  // =====================
+  const TEMA_CHAVE = 'supernavi_tema';
+
+  function temaGravado() {
+    try {
+      const v = localStorage.getItem(TEMA_CHAVE);
+      return v === 'claro' || v === 'escuro' ? v : 'sistema';
+    } catch { return 'sistema'; }
+  }
+
+  function temaEfetivo() {
+    const escolha = temaGravado();
+    if (escolha !== 'sistema') return escolha;
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'escuro' : 'claro';
+  }
+
+  function aplicarTema(escolha) {
+    try {
+      if (escolha === 'sistema') localStorage.removeItem(TEMA_CHAVE);
+      else localStorage.setItem(TEMA_CHAVE, escolha);
+    } catch { /* armazenamento bloqueado: vale só nesta sessão */ }
+
+    if (escolha === 'sistema') delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = escolha;
+
+    const escuro = temaEfetivo() === 'escuro';
+    const marca = $('#brandMark');
+    // A marca colorida some no escuro e a branca some no claro: uma para cada.
+    if (marca) marca.src = escuro ? '/logo-mark.svg' : '/logo-mark-claro.png';
+    const btn = $('#btnTema');
+    if (btn) {
+      btn.querySelector('.icone-claro').classList.toggle('hidden', escuro);
+      btn.querySelector('.icone-escuro').classList.toggle('hidden', !escuro);
+      btn.setAttribute('aria-label', escuro ? 'Mudar para o tema claro' : 'Mudar para o tema escuro');
+      btn.setAttribute('title', btn.getAttribute('aria-label'));
+    }
+    $$('#temaSegmento button').forEach((b) => b.classList.toggle('active', b.dataset.tema === escolha));
+  }
+
+  function initTema() {
+    aplicarTema(temaGravado());
+    const btn = $('#btnTema');
+    if (btn) btn.addEventListener('click', () => aplicarTema(temaEfetivo() === 'escuro' ? 'claro' : 'escuro'));
+    const seg = $('#temaSegmento');
+    if (seg) seg.addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (b) aplicarTema(b.dataset.tema);
+    });
+    if (window.matchMedia) {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+        if (temaGravado() === 'sistema') aplicarTema('sistema');
+      });
+    }
+  }
+
+  // =====================
+  //  Confirmação e avisos, no lugar de confirm() e alert() do navegador
+  // =====================
+  function confirmar({ titulo, texto, acao = 'Confirmar', perigo = false }) {
+    return new Promise((resolve) => {
+      const veu = $('#confirmDialog');
+      const ok = $('#confirmOk');
+      const cancelar = $('#confirmCancelar');
+      if (!veu || !ok || !cancelar) { resolve(false); return; }
+
+      setText('#confirmTitulo', titulo);
+      setText('#confirmTexto', texto || '');
+      ok.textContent = acao;
+      ok.classList.toggle('btn-perigo', !!perigo);
+      veu.classList.add('aberto');
+      const anterior = document.activeElement;
+      ok.focus();
+
+      function fechar(valor) {
+        veu.classList.remove('aberto');
+        ok.removeEventListener('click', aoConfirmar);
+        cancelar.removeEventListener('click', aoCancelar);
+        veu.removeEventListener('click', aoClicarFora);
+        document.removeEventListener('keydown', aoTeclar);
+        if (anterior && anterior.focus) anterior.focus();
+        resolve(valor);
+      }
+      function aoConfirmar() { fechar(true); }
+      function aoCancelar() { fechar(false); }
+      function aoClicarFora(e) { if (e.target === veu) fechar(false); }
+      function aoTeclar(e) {
+        if (e.key === 'Escape') fechar(false);
+        if (e.key === 'Tab') {
+          // Mantém o foco dentro do diálogo.
+          e.preventDefault();
+          (document.activeElement === ok ? cancelar : ok).focus();
+        }
+      }
+      ok.addEventListener('click', aoConfirmar);
+      cancelar.addEventListener('click', aoCancelar);
+      veu.addEventListener('click', aoClicarFora);
+      document.addEventListener('keydown', aoTeclar);
+    });
+  }
+
+  function avisar(texto, tipo = 'error') {
+    const caixa = $('#avisos');
+    if (!caixa) return;
+    const item = el('div', { className: 'aviso' });
+    item.appendChild(el('span', { className: 'dot ' + (tipo === 'ok' ? 'ok' : tipo === 'atencao' ? 'atencao' : 'falha') }));
+    item.appendChild(el('span', { textContent: texto }));
+    caixa.appendChild(item);
+    setTimeout(() => item.remove(), 7000);
+  }
+
   // ---- DOM references (cached after DOMContentLoaded) ----
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
@@ -134,8 +246,8 @@
   function setBlock(id, state, detail) {
     const wrap = $('#' + id);
     if (!wrap) return;
-    const block = wrap.querySelector('.block');
-    if (block) block.dataset.state = state;
+    const dot = wrap.querySelector('.dot');
+    if (dot) dot.className = 'dot ' + (state === 'unknown' ? '' : state);
     const det = wrap.querySelector('.block-detail');
     if (det) det.textContent = detail;
   }
@@ -249,7 +361,7 @@
     if (!recent) return;
     clearChildren(recent);
     if (slidesData.length === 0) {
-      const empty = el('p', { className: 'empty' });
+      const empty = el('p', { className: 'vazio' });
       empty.textContent = 'Nenhuma l\u00e2mina registrada ainda.';
       recent.appendChild(empty);
       return;
@@ -258,15 +370,17 @@
   }
 
   function buildSlideCard(slide) {
-    const row = el('div', { className: 'row slide-card' });
+    const row = el('div', { className: 'linha slide-card' });
     row.setAttribute('data-status', slide.status || 'queued');
     row.setAttribute('data-slide-id', slide.slideId);
 
     const pendingReview = slide.reviewStatus === 'pending';
     const named = !!slide.externalSlideLabel;
-    const idCell = el('button', { className: 'row-id btn-link' + (named ? '' : ' sem-nome'), type: 'button' });
+
+    const idCell = el('button', { className: 'id linha-id btn-texto', type: 'button' });
     idCell.textContent = named ? slide.externalSlideLabel : 'Sem identifica\u00e7\u00e3o';
     idCell.title = pendingReview ? 'Leitura do OCR, aguardando confirma\u00e7\u00e3o' : 'Renomear';
+    if (!named) idCell.classList.add('sem-nome');
     idCell.addEventListener('click', (e) => {
       e.stopPropagation();
       if (pendingReview || !named) {
@@ -277,39 +391,43 @@
     });
     row.appendChild(idCell);
 
-    const file = el('div', { className: 'row-file' });
+    const meio = el('div', { className: 'linha-texto' });
+    const file = el('span', { className: 'linha-detalhe' });
     file.textContent = slide.originalFilename || '--';
-    file.title = (slide.width && slide.height) ? slide.width + ' \u00d7 ' + slide.height + (slide.appMag ? ' \u00b7 ' + slide.appMag + '\u00d7' : '') : '';
-    row.appendChild(file);
+    file.title = (slide.width && slide.height) ? slide.width + ' \u00d7 ' + slide.height + (slide.appMag ? ', ' + slide.appMag + '\u00d7' : '') : '';
+    meio.appendChild(file);
+    row.appendChild(meio);
 
+    const fim = el('div', { className: 'linha-fim' });
     const chipClass = { ready: 'chip-ok', processing: 'chip-azul', queued: 'chip-atencao', failed: 'chip-falha' }[slide.status] || '';
     const chip = el('span', { className: 'chip badge badge-' + (slide.status || 'queued') + ' ' + chipClass });
-    chip.textContent = pendingReview && slide.status === 'ready' ? 'pronta \u00b7 confirmar nome' : statusLabel(slide.status);
-    row.appendChild(chip);
+    chip.textContent = pendingReview && slide.status === 'ready' ? 'confirmar nome' : statusLabel(slide.status);
+    fim.appendChild(chip);
 
-    const time = el('span', { className: 'row-time' });
+    const time = el('span', { className: 'tnum' });
     time.textContent = relativeTime(slide.createdAt);
-    row.appendChild(time);
+    fim.appendChild(time);
 
-    const actions = el('div', { className: 'row-actions' });
-    const tl = el('button', { className: 'btn', type: 'button' });
+    const actions = el('div', { className: 'linha-acoes' });
+    const tl = el('button', { className: 'btn-texto', type: 'button' });
     tl.textContent = 'Timeline';
     tl.addEventListener('click', (e) => { e.stopPropagation(); openPipelineModal(slide.slideId, slide.originalFilename); });
     actions.appendChild(tl);
     if (slide.status === 'failed' || slide.latestError) {
-      const btn = el('button', { className: 'btn btn-reprocess', type: 'button' });
+      const btn = el('button', { className: 'btn-texto btn-reprocess', type: 'button' });
       btn.textContent = 'Reprocessar';
       btn.addEventListener('click', (e) => { e.stopPropagation(); reprocessSlide(slide.slideId, btn); });
       actions.appendChild(btn);
     }
-    const del = el('button', { className: 'btn btn-perigo btn-delete', type: 'button' });
+    const del = el('button', { className: 'btn-texto btn-perigo btn-delete', type: 'button' });
     del.textContent = 'Excluir';
     del.addEventListener('click', (e) => { e.stopPropagation(); deleteSlide(slide.slideId, slide.originalFilename, row); });
     actions.appendChild(del);
-    row.appendChild(actions);
+    fim.appendChild(actions);
+    row.appendChild(fim);
 
     if (slide.latestError) {
-      const err = el('div', { className: 'row-erro' });
+      const err = el('div', { className: 'linha-erro' });
       err.textContent = (slide.latestErrorStage ? slide.latestErrorStage + ': ' : '') + slide.latestError;
       row.appendChild(err);
     }
@@ -372,8 +490,13 @@
   }
 
   async function deleteSlide(slideId, filename, card) {
-    const msg = `Excluir lâmina "${filename}"?\n\nIsso apaga banco, raw, derivados e agenda limpeza S3.`;
-    if (!confirm(msg)) return;
+    const ok = await confirmar({
+      titulo: 'Excluir esta lâmina?',
+      texto: `${filename} sai do banco, do disco e da nuvem. Não dá para desfazer.`,
+      acao: 'Excluir',
+      perigo: true,
+    });
+    if (!ok) return;
 
     // Visual feedback
     card.style.opacity = '0.5';
@@ -396,12 +519,12 @@
       } else {
         card.style.opacity = '1';
         card.style.pointerEvents = '';
-        alert(data.error || 'Erro ao excluir lâmina');
+        avisar(data.error || 'Não foi possível excluir a lâmina.');
       }
     } catch (err) {
       card.style.opacity = '1';
       card.style.pointerEvents = '';
-      alert('Erro de rede ao excluir lâmina');
+      avisar('Não foi possível excluir a lâmina: a API do edge não respondeu.');
     }
   }
 
@@ -1403,7 +1526,7 @@
 
     // Actions
     const actions = el('div', { className: 'failure-actions' });
-    const detailsBtn = el('button', { className: 'btn btn-failure-details' });
+    const detailsBtn = el('button', { className: 'btn-texto btn-failure-details' });
     detailsBtn.textContent = 'Timeline';
     detailsBtn.addEventListener('click', () => {
       openPipelineModal(failure.slideId, failure.originalFilename);
@@ -1412,7 +1535,7 @@
 
     const advAction = failure.advice?.action;
     if (advAction === 'reprocess') {
-      const rpBtn = el('button', { className: 'btn btn-primario btn-failure-action' });
+      const rpBtn = el('button', { className: 'btn-texto btn-failure-action' });
       rpBtn.textContent = 'Reprocessar';
       rpBtn.addEventListener('click', () => reprocessSlide(failure.slideId, rpBtn));
       actions.appendChild(rpBtn);
@@ -1450,7 +1573,7 @@
         : (stuck.entityId || '').replace(/^preview:/, '');
       if (slideId) {
         const actions = el('div', { className: 'failure-actions' });
-        const btn = el('button', { className: 'btn btn-failure-details' });
+        const btn = el('button', { className: 'btn-texto btn-failure-details' });
         btn.textContent = 'Timeline';
         btn.addEventListener('click', () => openPipelineModal(slideId, slideId.substring(0, 12)));
         actions.appendChild(btn);
@@ -1669,7 +1792,9 @@
     });
     if (total > 5) {
       const more = el('button', { className: 'thumb thumb-more', type: 'button' });
-      more.textContent = '+' + (total - 5);
+      const caixa = el('span');
+      caixa.textContent = '+' + (total - 5);
+      more.appendChild(caixa);
       more.addEventListener('click', () => activateTab('review'));
       thumbs.appendChild(more);
     }
@@ -1681,11 +1806,12 @@
     const img = el('img', { src: labelUrl(sl.id), alt: 'Foto da etiqueta' });
     card.appendChild(img);
 
-    const body = el('div');
-    const field = el('div', { className: 'field' });
+    const body = el('div', { className: 'review-card-corpo' });
+    const field = el('div', { className: 'campo' });
     const label = el('label'); label.textContent = 'Nome lido pelo OCR';
     const input = el('input', { type: 'text', className: 't-id', autocomplete: 'off', spellcheck: 'false' });
     input.value = sl.proposed_name || '';
+    input.classList.add('id');
     input.placeholder = 'AP26000388A1, RE26000003 ou 26-388A';
     const file = el('small', { className: 'review-card-file' }); file.textContent = sl.original_filename || '';
     const err = el('small', { className: 'erro hidden' });
@@ -1694,8 +1820,8 @@
 
     const actions = el('div', { className: 'review-card-actions' });
     const confirm = el('button', { className: 'btn btn-primario', type: 'button' }); confirm.textContent = 'Confirmar';
-    const open = el('button', { className: 'btn', type: 'button' }); open.textContent = 'Ver l\u00e2mina inteira';
-    const rescan = el('button', { className: 'btn', type: 'button' }); rescan.textContent = 'Rescanear';
+    const open = el('button', { className: 'btn-texto', type: 'button' }); open.textContent = 'Ver l\u00e2mina inteira';
+    const rescan = el('button', { className: 'btn-texto', type: 'button' }); rescan.textContent = 'Rescanear';
     actions.appendChild(confirm); actions.appendChild(open); actions.appendChild(rescan);
     body.appendChild(actions);
     card.appendChild(body);
@@ -1930,7 +2056,7 @@
         fetchSlides();
         await loadNextOrClose();
       } catch (err) {
-        alert(`Erro ao confirmar: ${err.message}`);
+        avisar('Não foi possível confirmar: ' + err.message);
         reviewConfirm.disabled = false;
       }
     });
@@ -1939,12 +2065,17 @@
   const reviewRescan = document.getElementById('reviewRescan');
   if (reviewRescan) {
     reviewRescan.addEventListener('click', async () => {
-      if (!confirm('Marcar esta lâmina como rescanear?')) return;
+      const ok = await confirmar({
+        titulo: 'Marcar para rescanear?',
+        texto: 'A lâmina volta para a fila e o scanner lê a etiqueta de novo.',
+        acao: 'Marcar',
+      });
+      if (!ok) return;
       try {
         await fetch(`/v1/pending-slides/${encodeURIComponent(currentSlideId)}/rescan`, { method: 'POST' });
         await loadNextOrClose();
       } catch (err) {
-        alert(`Erro: ${err.message}`);
+        avisar('Não foi possível marcar para rescanear: ' + err.message);
       }
     });
   }
@@ -1964,6 +2095,7 @@
   //  Initialization
   // =====================
   function init() {
+    initTema();
     initTabs();
     initSlideFilters();
     initOcrModal();

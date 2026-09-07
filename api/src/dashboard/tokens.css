@@ -1,5 +1,10 @@
-/* SuperNavi design tokens. Only variables and @font-face live here.
-   Spec: docs/superpowers/specs/2026-09-06-edge-visual-identity-design.md (§3) */
+/* SuperNavi design tokens — sistema Apple-like com o azul da marca.
+   Só variáveis e @font-face; componente e layout ficam em dashboard.css.
+   Spec: docs/superpowers/specs/2026-09-06-edge-visual-identity-design.md
+
+   Temas: claro por padrão. O escuro entra por preferência do sistema ou por
+   escolha explícita em <html data-theme="escuro">. Uma escolha explícita
+   sempre vence a preferência do sistema. */
 
 @font-face {
   font-family: "Atkinson Hyperlegible Next";
@@ -24,65 +29,132 @@
 }
 
 :root {
-  /* Brand (sampled from the logo) */
+  /* Marca, invariante nos dois temas */
   --sn-petroleo: #003858;
-  --sn-azul: #3890D0;
-  --sn-grafite: #304048;
-  --sn-prata: #B8B8C0;
-  --sn-papel: #F4F7FA;
+  --sn-azul-marca: #3890D0;
 
-  /* States */
-  --sn-ok: #35B37A;
-  --sn-atencao: #E0A33A;
-  --sn-falha: #E25C5C;
-  --sn-ok-bg: rgba(53, 179, 122, 0.14);
-  --sn-atencao-bg: rgba(224, 163, 58, 0.14);
-  --sn-falha-bg: rgba(226, 92, 92, 0.14);
-  --sn-azul-bg: rgba(56, 144, 208, 0.14);
+  /* --- Tema claro --- */
+  --sn-fundo: #F1F3F6;
+  --sn-superficie: #FFFFFF;
+  --sn-superficie-2: #F7F9FB;
+  --sn-selecao: rgba(31, 111, 168, 0.12);
+  --sn-separador: rgba(22, 32, 42, 0.12);
+  --sn-borda: rgba(22, 32, 42, 0.10);
+  --sn-texto: #16202A;
+  --sn-texto-2: #556571;
+  --sn-texto-3: #67757F;
 
-  /* Dark scale (petróleo darkened) */
-  --sn-fundo: #071A28;
-  --sn-painel: #0B2436;
-  --sn-cartao: #10334A;
-  --sn-realce: #1A4460;
-  --sn-borda: rgba(184, 184, 192, 0.14);
-  --sn-texto: #E6EEF5;
-  --sn-texto-2: #9FB3C4;
-  --sn-texto-3: #6E8496;
-  --sn-sombra: 0 8px 24px rgba(0, 0, 0, 0.35);
-  --sn-veu: rgba(7, 26, 40, 0.7);
+  --sn-azul: #1F6FA8;
+  --sn-sobre-azul: #FFFFFF;
+  --sn-verde: #17805A;
+  --sn-ambar: #9A6212;
+  --sn-vermelho: #C2352C;
+  --sn-verde-tinta: rgba(23, 128, 90, 0.12);
+  --sn-ambar-tinta: rgba(154, 98, 18, 0.12);
+  --sn-vermelho-tinta: rgba(194, 53, 44, 0.12);
+  --sn-azul-tinta: rgba(31, 111, 168, 0.12);
 
-  /* Type */
-  --sn-fonte: "Atkinson Hyperlegible Next", system-ui, "Segoe UI", sans-serif;
-  --sn-t-grande: 32px;
-  --sn-t-pagina: 22px;
-  --sn-t-secao: 18px;
-  --sn-t-id: 15px;
+  /* Material translúcido da barra e do trilho */
+  --sn-material: rgba(255, 255, 255, 0.72);
+  --sn-material-solido: #FBFCFD;
+  --sn-sombra-modal: 0 24px 60px rgba(22, 32, 42, 0.24);
+  --sn-veu: rgba(22, 32, 42, 0.32);
+
+  /* Tipografia */
+  --sn-fonte: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --sn-fonte-id: "Atkinson Hyperlegible Next", var(--sn-fonte);
+  --sn-t-titulo: 28px;
+  --sn-t-secao: 20px;
+  --sn-t-destaque: 15px;
   --sn-t-corpo: 14px;
-  --sn-t-lista: 13px;
+  --sn-t-menor: 13px;
+  --sn-t-mini: 12px;
 
-  /* Spacing */
+  /* Espaçamento */
   --sn-esp-1: 4px;
   --sn-esp-2: 8px;
   --sn-esp-3: 12px;
   --sn-esp-4: 16px;
-  --sn-esp-5: 24px;
-  --sn-esp-6: 32px;
-  --sn-esp-7: 48px;
+  --sn-esp-5: 20px;
+  --sn-esp-6: 24px;
+  --sn-esp-7: 32px;
 
-  /* Radius */
-  --sn-raio-controle: 6px;
-  --sn-raio-cartao: 10px;
-  --sn-raio-bloco: 12px;
+  /* Forma */
+  --sn-raio-grupo: 10px;
+  --sn-raio-controle: 7px;
+  --sn-raio-foto: 8px;
 
-  /* Motion */
-  --sn-mov: 240ms ease;
+  /* Movimento */
+  --sn-mov: 200ms ease;
 
   /* Layout */
-  --sn-cabecalho: 56px;
-  --sn-trilho: 200px;
-  --sn-trilho-min: 56px;
-  --sn-conteudo-max: 1180px;
+  --sn-barra: 52px;
+  --sn-trilho: 224px;
+  --sn-conteudo-max: 880px;
+
+  color-scheme: light;
+}
+
+/* --- Tema escuro por preferência do sistema, quando não há escolha --- */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="claro"]) {
+    --sn-fundo: #17191C;
+    --sn-superficie: #202329;
+    --sn-superficie-2: #2A2E35;
+    --sn-selecao: rgba(79, 163, 224, 0.18);
+    --sn-separador: rgba(160, 175, 190, 0.16);
+    --sn-borda: rgba(160, 175, 190, 0.14);
+    --sn-texto: #FFFFFF;
+    --sn-texto-2: #9AA0A9;
+    --sn-texto-3: #8A9099;
+
+    --sn-azul: #4FA3E0;
+    --sn-sobre-azul: #17191C;
+    --sn-verde: #32D583;
+    --sn-ambar: #F5A524;
+    --sn-vermelho: #FF6B6B;
+    --sn-verde-tinta: rgba(50, 213, 131, 0.16);
+    --sn-ambar-tinta: rgba(245, 165, 36, 0.16);
+    --sn-vermelho-tinta: rgba(255, 107, 107, 0.16);
+    --sn-azul-tinta: rgba(79, 163, 224, 0.16);
+
+    --sn-material: rgba(32, 35, 41, 0.72);
+    --sn-material-solido: #1C1F24;
+    --sn-sombra-modal: 0 24px 60px rgba(0, 0, 0, 0.5);
+    --sn-veu: rgba(0, 0, 0, 0.5);
+
+    color-scheme: dark;
+  }
+}
+
+/* --- Tema escuro por escolha explícita --- */
+:root[data-theme="escuro"] {
+  --sn-fundo: #17191C;
+  --sn-superficie: #202329;
+  --sn-superficie-2: #2A2E35;
+  --sn-selecao: rgba(79, 163, 224, 0.18);
+  --sn-separador: rgba(160, 175, 190, 0.16);
+  --sn-borda: rgba(160, 175, 190, 0.14);
+  --sn-texto: #FFFFFF;
+  --sn-texto-2: #9AA0A9;
+  --sn-texto-3: #8A9099;
+
+  --sn-azul: #4FA3E0;
+  --sn-sobre-azul: #17191C;
+  --sn-verde: #32D583;
+  --sn-ambar: #F5A524;
+  --sn-vermelho: #FF6B6B;
+  --sn-verde-tinta: rgba(50, 213, 131, 0.16);
+  --sn-ambar-tinta: rgba(245, 165, 36, 0.16);
+  --sn-vermelho-tinta: rgba(255, 107, 107, 0.16);
+  --sn-azul-tinta: rgba(79, 163, 224, 0.16);
+
+  --sn-material: rgba(32, 35, 41, 0.72);
+  --sn-material-solido: #1C1F24;
+  --sn-sombra-modal: 0 24px 60px rgba(0, 0, 0, 0.5);
+  --sn-veu: rgba(0, 0, 0, 0.5);
+
+  color-scheme: dark;
 }
 
 @media (prefers-reduced-motion: reduce) {

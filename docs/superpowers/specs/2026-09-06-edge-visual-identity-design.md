@@ -36,117 +36,108 @@ Fora (próximo ciclo):
 
 ## 3. Identidade
 
+> **Revisão de 2026-09-06, tarde.** A primeira versão desta spec propunha um
+> sistema próprio, com fundo petróleo e a Atkinson Hyperlegible em toda a
+> interface. Depois de ver aquilo rodando, Ivan pediu a direção Apple-like com
+> opção de claro e escuro, valendo para o edge e para o viewer, mantendo o azul
+> da marca como acento. Esta seção descreve o sistema que está no código; a
+> proposta anterior fica registrada no histórico do git.
+
+O idioma é o do macOS: fundo agrupado, conteúdo em cartões sem sombra, linhas
+separadas por fio recuado, barra e trilho translúcidos, tipografia do sistema,
+cor usada com função e não como decoração. O que torna isto SuperNavi, e não um
+app de sistema genérico, são três escolhas:
+
+1. Os cinzas neutros da Apple são puxados alguns graus para o petróleo do logo.
+2. O acento é o azul da marca, na profundidade que cada fundo aguenta.
+3. A única cor saturada da janela vem das fotos das etiquetas.
+
 ### 3.1 Cores
 
-Todas derivadas do logo (amostragem do `logosupernavi.png`: `#003858`, `#3890D0`,
-`#304048`, `#B8B8C0`).
+Marca, igual nos dois temas: `--sn-petroleo` `#003858` e `--sn-azul-marca`
+`#3890D0`.
 
-| Token | Valor | Papel |
-|---|---|---|
-| `--sn-petroleo` | `#003858` | Cor da marca. Base das superfícies escuras. |
-| `--sn-azul` | `#3890D0` | Único acento: ação, foco, seleção, "processando". |
-| `--sn-grafite` | `#304048` | Bordas e superfícies secundárias. |
-| `--sn-prata` | `#B8B8C0` | Texto de apoio, estados inativos. |
-| `--sn-papel` | `#F4F7FA` | Fundo claro. Reservado ao viewer. |
-| `--sn-ok` | `#35B37A` | Pronto, conectado, confirmado. |
-| `--sn-atencao` | `#E0A33A` | Aguardando pessoa, degradado. |
-| `--sn-falha` | `#E25C5C` | Erro, desconectado. |
+| Token | Claro | Escuro | Uso |
+|---|---|---|---|
+| `--sn-fundo` | `#F1F3F6` | `#17191C` | janela |
+| `--sn-superficie` | `#FFFFFF` | `#202329` | grupos, cartões, campos |
+| `--sn-superficie-2` | `#F7F9FB` | `#2A2E35` | hover, trilho do segmentado |
+| `--sn-separador` | `rgba(22,32,42,.12)` | `rgba(160,175,190,.16)` | fio entre linhas |
+| `--sn-texto` | `#16202A` | `#FFFFFF` | texto principal |
+| `--sn-texto-2` | `#556571` | `#9AA0A9` | secundário |
+| `--sn-texto-3` | `#67757F` | `#8A9099` | metadados |
+| `--sn-azul` | `#1F6FA8` | `#4FA3E0` | ação, link, seleção |
+| `--sn-sobre-azul` | `#FFFFFF` | `#17191C` | texto sobre o botão primário |
+| `--sn-verde` | `#17805A` | `#32D583` | pronta, conectado |
+| `--sn-ambar` | `#9A6212` | `#F5A524` | aguardando |
+| `--sn-vermelho` | `#C2352C` | `#FF6B6B` | erro |
 
-Escala escura do edge (petróleo escurecido em três degraus mais um de realce):
+Todo par de texto sobre superfície fica acima de 4,5:1, e o texto principal
+acima de 7:1. O teste de tokens mede isso nos dois temas e falha se alguém
+mexer numa cor sem olhar o contraste.
 
-| Token | Valor | Uso |
-|---|---|---|
-| `--sn-fundo` | `#071A28` | Página. |
-| `--sn-painel` | `#0B2436` | Trilho, cabeçalho, áreas de agrupamento. |
-| `--sn-cartao` | `#10334A` | Cartões, linhas em foco, modais. |
-| `--sn-realce` | `#1A4460` | Hover, bordas fortes, separadores. |
-| `--sn-borda` | `rgba(184, 184, 192, 0.14)` | Borda padrão. |
-| `--sn-texto` | `#E6EEF5` | Texto principal. |
-| `--sn-texto-2` | `#9FB3C4` | Texto secundário. |
-| `--sn-texto-3` | `#6E8496` | Texto terciário, metadados. |
+O azul claro `#1F6FA8` é o azul da marca escurecido até passar em contraste
+sobre branco; no escuro ele é clareado para `#4FA3E0`. É o mesmo movimento que a
+Apple faz entre `#007AFF` e `#0A84FF`.
 
-Cada cor de estado tem uma variante de fundo a 14% de opacidade (`--sn-ok-bg` etc.)
-para chips e blocos. Não existem gradientes, brilhos, sombras coloridas nem grade de
-fundo. A única sombra é `--sn-sombra: 0 8px 24px rgba(0, 0, 0, 0.35)`, em modais.
+Materiais: barra e trilho usam `--sn-material`, um branco ou cinza a 72% com
+`backdrop-filter`, e caem para uma cor sólida onde o navegador não suporta.
+Sombra existe só em modal e aviso.
 
-Contraste mínimo: texto principal e secundário sobre `--sn-cartao` acima de 7:1 e
-4.5:1 respectivamente. Cores de estado nunca são o único sinal: sempre acompanham
-forma (bloco cheio ou vazado) ou texto.
+### 3.2 Temas
 
-### 3.2 Tipografia
+Claro é o padrão. O escuro entra pela preferência do sistema ou por escolha
+explícita, e a escolha vence a preferência:
 
-Uma família: **Atkinson Hyperlegible Next**, pesos 400, 500 e 700, arquivos woff2
-em `dashboard/fonts/` com `@font-face` e `font-display: swap`. Fallback
-`system-ui, "Segoe UI", sans-serif`. Nada de CDN: o notebook precisa renderizar
-sem rede.
+1. Sem escolha gravada, vale `prefers-color-scheme`, e mudar a preferência do
+   sistema muda a janela na hora.
+2. A escolha é gravada em `localStorage`, chave `supernavi_tema`.
+3. Um script no `<head>` aplica o tema antes da primeira pintura, para a janela
+   não piscar branca.
 
-Motivo: a fonte foi desenhada para distinguir I, l, 1, O e 0. O produto vive de ler
-identificadores como `AP26000388A1` e `RE26000003`, e o incidente de 2026-09-04 nasceu
-de uma leitura ambígua.
+Dois controles: um botão na barra superior, que alterna claro e escuro, e um
+segmentado em Configurações → Aparência com Sistema, Claro e Escuro.
 
-Escala (px / line-height):
+### 3.3 Tipografia
 
-| Papel | Tamanho | Peso |
-|---|---|---|
-| Número grande da fila | 32 / 1.1 | 700 |
-| Título de página | 22 / 1.25 | 700 |
-| Título de seção e de modal | 18 / 1.3 | 700 |
-| Identificador de lâmina | 15 / 1.4 | 700, `font-variant-numeric: tabular-nums` |
-| Corpo | 14 / 1.5 | 400 |
-| Listas, metadados, trilho | 13 / 1.5 | 400 e 500 |
-| Contadores e horas | herdam o tamanho, `tabular-nums` | |
+Duas famílias, com papéis separados por regra, não por gosto:
 
-Regras: frase normal em tudo (sem caixa alta, sem `letter-spacing` aberto), sem
-monoespaçado, sem itálico. Um único peso forte por linha.
+- **Interface**: a pilha do sistema (`-apple-system`, `BlinkMacSystemFont`,
+  `Segoe UI`, `system-ui`). No Mac isso é a San Francisco de verdade.
+- **Identificadores**: Atkinson Hyperlegible Next, hospedada no edge, só em
+  número de caso, nome de arquivo e contagem. A fonte separa I, l, 1, O e 0, e
+  um erro de leitura aqui troca de paciente.
 
-### 3.3 Espaçamento, raio, forma
+Escala: título de página 28/600, título de grupo 20/600, destaque 15/600, corpo
+14/400, menor 13, mini 12. Peso máximo 600, nunca 700: a Apple usa semibold em
+títulos, e negrito pesado denuncia outro sistema. Frase normal em tudo, sem
+caixa alta, sem itálico.
 
-- Escala de espaçamento: 4, 8, 12, 16, 24, 32, 48 (`--sn-esp-1` a `--sn-esp-7`).
-- Raio: 6 px em controles, 10 px em cartões e modais, 12 px nos blocos de serviço.
-  Nada de raio uniforme em tudo: linhas de lista não têm raio.
-- Bordas de 1 px em `--sn-borda`. Sem sombra fora dos modais.
-- Ícones: traço único de 1.5 px, 18 px em linha e 20 px no trilho, sempre na cor do
-  texto ao lado (SVG inline, conjunto Lucide, já usado hoje). Ícone nunca fica sozinho
-  sem rótulo, exceto botão de fechar.
+### 3.4 Forma e componentes
 
-### 3.4 O elemento memorável: blocos de serviço
+Raio 10 em grupos e 7 em controles. Linha de 44 px com fio recuado 16 px da
+borda, como nas listas do macOS. Botão primário preenchido no azul; secundário
+com borda; ação dentro de linha é texto azul, e destrutiva é texto vermelho, sem
+borda. Ação destrutiva dentro de um diálogo é preenchida em vermelho. Chip de
+estado em cápsula com a cor a 12%. Segmentado com trilho cinza e item ativo
+elevado. Foco de teclado com anel de 3 px no azul.
 
-Os sete serviços do edge (Túnel, Scanner, Entrada, Banco, Fila, Processador, Disco)
-aparecem como blocos quadrados de 44 px com a silhueta dos blocos do logo: quadrado de raio 12 com
-um entalhe retangular numa borda (o "colchete" do logo, entalhe de 1/3 do lado).
-Estados:
+Nada de gradiente, de sombra sob cartão, nem de rótulo em caixa alta acima de
+conteúdo.
 
-- Pronto: bloco preenchido em `--sn-ok`, entalhe na cor do painel.
-- Processando: preenchido em `--sn-azul`.
-- Aguardando ou degradado: só contorno de 2 px em `--sn-atencao`, interior vazio.
-- Falha: preenchido em `--sn-falha`.
-- Desconhecido (ainda sem dado): contorno em `--sn-prata` a 40%.
+### 3.5 Sem diálogos do navegador
 
-Ao lado de cada bloco, nome do serviço em 14/500 e uma linha de detalhe em 13
-(`Agente MAC01`, `Motic`, `/data/inbox`, `119 lâminas`, `3 na fila`, `Ocioso`,
-`104 prontas`). Os sete blocos ficam numa única linha de 150 px cada, como uma
-fatia da grade do logo; abaixo de 1100 px quebram em duas linhas.
-"Scanner" é o adaptador Motic, "Entrada" é a pasta de inbox (watcher), "Banco" é o
-PostgreSQL local. É o único lugar da
-interface que "desenha"; todo o resto é linha, texto e espaço.
+`alert`, `confirm` e `prompt` estão proibidos: travam a página, ignoram o tema e
+não têm foco tratado. No lugar existem `confirmar()`, um diálogo com foco preso,
+Esc para cancelar e verbo próprio no botão, e `avisar()`, um aviso que aparece no
+canto e some sozinho. Um teste falha se alguém reintroduzir os nativos.
 
-Mudança de estado de um bloco anima a cor em 240 ms. Nenhuma outra animação de
-entrada. `prefers-reduced-motion` desliga tudo.
+### 3.6 Voz
 
-### 3.5 Voz e texto
-
-- Nomes de ação iguais aos do viewer: Confirmar, Renomear, Confirmar todas,
-  Rescanear, Publicar etiquetas, Republicar previews, Salvar configuração.
-- Verbo no botão diz o que acontece. A confirmação repete o verbo:
-  "Publicar etiquetas" gera "Etiquetas publicadas: 104 lâminas".
-- Estados vazios orientam: "Nenhuma lâmina com falha. O scanner segue sendo
-  monitorado." / "Nenhuma lâmina aguardando confirmação." / "Nenhuma lâmina
-  encontrada com este filtro."
-- Erros dizem o que aconteceu e o que fazer: "Não foi possível ler a fila.
-  A API do edge não respondeu. Tentando de novo em 5 s."
-- Sem jargão de sistema para o técnico: "Fila" em vez de "Redis", "Banco" em vez de
-  "PostgreSQL", "Entrada" em vez de "Watcher". Detalhes técnicos ficam na linha
-  secundária.
+Nomes de ação iguais aos do viewer: Confirmar, Renomear, Confirmar todas,
+Rescanear, Publicar, Republicar, Salvar configuração. O verbo do botão volta na
+confirmação. Estados vazios dizem o que esperar. Erros dizem o que aconteceu e o
+que fazer.
 
 ## 4. Dashboard do edge
 
